@@ -29,6 +29,7 @@ from metarpg.agentic.scanner import scan_segment
 from metarpg.agentic.hard_auditor import run_hard_audit
 from metarpg.agentic.soft_auditor_agent import run_soft_auditor
 from metarpg.agentic.committer import commit_turn
+from metarpg.agentic.run_logger import RunLogger
 from metarpg.agentic.scorecard import TurnScorecard
 from metarpg.agentic.schemas import TurnDraft
 from metarpg.scenarios.greyfen import build
@@ -155,6 +156,9 @@ def main() -> int:
     world = build()
     history: list[str] = []
     turn_idx = 0
+    scorecards: list[dict] = []
+
+    logger = RunLogger(run_id, run_dir)
 
     _clear()
     print("=" * 60)
@@ -179,6 +183,21 @@ def main() -> int:
         if raw in {"/quit", "/q", "退出"}:
             print("\n存档并退出...")
             _save_world(world, run_dir, turn_idx)
+            hard_failures = []
+            medium_issues = []
+            soft_issues = []
+            for sc in scorecards:
+                hard_failures.extend(sc.get("hard_failures", []))
+                medium_issues.extend(sc.get("medium_issues", []))
+                soft_issues.extend(sc.get("soft_issues", []))
+            logger.close(
+                turns_attempted=turn_idx,
+                turns_completed=turn_idx,
+                scorecards=scorecards,
+                hard_failures=hard_failures,
+                medium_issues=medium_issues,
+                soft_issues=soft_issues,
+            )
             print(f"存档: {run_dir}")
             break
 
@@ -202,6 +221,7 @@ def main() -> int:
         turn_idx += 1
         player_input = raw
         print(f"\n  [回合 {turn_idx}] 你: {player_input}")
+        logger.emit(turn_idx, "turn", "turn_start", player_input)
 
         draft = TurnDraft(
             draft_id=f"{run_id}_turn_{turn_idx:03d}",
@@ -213,6 +233,7 @@ def main() -> int:
         t0 = time.time()
         story_packet = build_story_packet(world)
         draft.story_packet = story_packet
+        logger.emit(turn_idx, "story_packet", "story_packet_built")
 
         # 2. Writer
         t0 = time.time()
@@ -220,8 +241,10 @@ def main() -> int:
             writer_output = run_writer(story_packet, player_input)
             draft.writer_output = writer_output
             draft.candidate_patch = writer_output.candidate_patch
+            logger.emit(turn_idx, "writer", "writer_success", f"segments={len(writer_output.segments)}")
         except Exception as e:
             print(f"\n  [Writer 错误] {e}")
+            logger.log_error(turn_idx, "writer", type(e).__name__, str(e), traceback.format_exc())
             err_path = _write_error_turn(run_dir, draft, turn_idx, "writer", e)
             print(f"  [错误已记录] {err_path}")
             history.append(player_input)
@@ -231,7 +254,9 @@ def main() -> int:
         try:
             claims = run_translator(writer_output.segments, story_packet)
             draft.translated_claims = claims
-        except Exception:
+            logger.emit(turn_idx, "translator", "translator_success", f"claims={len(claims)}")
+        except Exception as e:
+            logger.log_error(turn_idx, "translator", type(e).__name__, str(e))
             claims = []
 
         # 4. Scanner
@@ -253,6 +278,7 @@ def main() -> int:
                 if isinstance(v, list):
                     scanner_findings.setdefault(k, []).extend(v)
         draft.deterministic_scan = scanner_findings
+        logger.emit(turn_idx, "scanner", "scanner_success")
 
         # 5. Hard Auditor
         audit = run_hard_audit(
@@ -264,6 +290,7 @@ def main() -> int:
             world,
         )
         draft.hard_audit = audit
+        logger.emit(turn_idx, "hard_audit", "hard_audit_success", f"passed={audit['passed']}")
 
         # 6. Soft Auditor (skip if hard failures)
         if audit["passed"]:
@@ -274,7 +301,9 @@ def main() -> int:
                     [e.__dict__ for e in writer_output.candidate_patch],
                 )
                 draft.soft_audit = {"passed": len(soft_issues) == 0, "issues": [i.__dict__ for i in soft_issues]}
-            except Exception:
+                logger.emit(turn_idx, "soft_audit", "soft_audit_success", f"issues={len(soft_issues)}")
+            except Exception as e:
+                logger.log_error(turn_idx, "soft_auditor", type(e).__name__, str(e))
                 draft.soft_audit = {"passed": True, "issues": []}
         else:
             draft.soft_audit = {"passed": False, "issues": []}
@@ -293,8 +322,10 @@ def main() -> int:
 
         if admitted:
             result = commit_turn(world, admitted, writer_output.segments)
+            logger.emit(turn_idx, "commit", "commit_success", f"turn={world.turn}")
         else:
             result = {"delta": {}, "player_output": draft.player_output, "turn": world.turn}
+            logger.emit(turn_idx, "commit", "commit_success", "nothing_admitted")
 
         # 8. Score
         sc = TurnScorecard(turn_id=draft.draft_id)
@@ -321,6 +352,7 @@ def main() -> int:
             sc.notes.append("missing_player_output")
         sc.player_experience_score = sc.compute_player_experience()
         draft.scorecard = sc.to_json()
+        scorecards.append(sc.to_json())
 
         # Output
         _print_output(writer_output.segments)
@@ -331,6 +363,7 @@ def main() -> int:
         turn_path = run_dir / f"turn_{turn_idx:03d}.json"
         with open(turn_path, "w", encoding="utf-8") as f:
             json.dump(draft.to_json(), f, ensure_ascii=False, indent=2)
+        logger.emit(turn_idx, "turn", "turn_written", str(turn_path.name))
 
         history.append(player_input)
 

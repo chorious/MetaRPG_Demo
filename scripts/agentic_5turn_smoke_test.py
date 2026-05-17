@@ -27,6 +27,7 @@ from metarpg.agentic.scanner import scan_segment
 from metarpg.agentic.hard_auditor import run_hard_audit
 from metarpg.agentic.soft_auditor_agent import run_soft_auditor
 from metarpg.agentic.committer import commit_turn
+from metarpg.agentic.run_logger import RunLogger
 from metarpg.agentic.scorecard import TurnScorecard
 from metarpg.agentic.schemas import TurnDraft
 from metarpg.scenarios.greyfen import build
@@ -53,6 +54,8 @@ def main() -> int:
     run_dir = Path("runtime/agentic_runs") / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    logger = RunLogger(run_id, run_dir)
+
     world = build()
     history: list[str] = []
 
@@ -74,6 +77,7 @@ def main() -> int:
         print(f"\n{'='*70}")
         print(f"TURN {turn_idx}: {player_input}")
         print("=" * 70)
+        logger.emit(turn_idx, "turn", "turn_start", player_input)
 
         draft = TurnDraft(
             draft_id=f"{run_id}_turn_{turn_idx:03d}",
@@ -85,6 +89,7 @@ def main() -> int:
         t0 = time.time()
         story_packet = build_story_packet(world)
         draft.story_packet = story_packet
+        logger.emit(turn_idx, "story_packet", "story_packet_built")
         print(f"\n[1] Story packet built ({time.time()-t0:.2f}s)")
         print(f"    Location: {story_packet['scene']['location']}")
         print(f"    Visible: {story_packet['scene']['visible_entities']}")
@@ -97,6 +102,7 @@ def main() -> int:
             writer_output = run_writer(story_packet, player_input)
             draft.writer_output = writer_output
             draft.candidate_patch = writer_output.candidate_patch
+            logger.emit(turn_idx, "writer", "writer_success", f"segments={len(writer_output.segments)}")
             print(f"\n[2] Writer (DeepSeek Flash) responded ({time.time()-t0:.2f}s)")
             print(f"    Interpretation: {writer_output.interpretation}")
             print(f"    Segments ({len(writer_output.segments)}):")
@@ -110,6 +116,7 @@ def main() -> int:
                 print(f"    Risk notes: {writer_output.risk_notes}")
         except Exception as e:
             print(f"\n[2] Writer FAILED: {e}")
+            logger.log_error(turn_idx, "writer", type(e).__name__, str(e))
             draft.writer_output = None
             draft.final_segments = []
             draft.player_output = ""
@@ -131,12 +138,14 @@ def main() -> int:
         try:
             claims = run_translator(writer_output.segments, story_packet)
             draft.translated_claims = claims
+            logger.emit(turn_idx, "translator", "translator_success", f"claims={len(claims)}")
             print(f"\n[3] Translator (Qwen3.6) responded ({time.time()-t0:.2f}s)")
             print(f"    Claims ({len(claims)}):")
             for c in claims:
                 print(f"      [{c.segment_id}] {c.kind} | evidence={c.evidence_span[:50]}... | conf={c.confidence}")
         except Exception as e:
             print(f"\n[3] Translator FAILED: {e}")
+            logger.log_error(turn_idx, "translator", type(e).__name__, str(e))
             claims = []
 
         # 4. Scanner
@@ -158,6 +167,7 @@ def main() -> int:
                 if isinstance(v, list):
                     scanner_findings.setdefault(k, []).extend(v)
         draft.deterministic_scan = scanner_findings
+        logger.emit(turn_idx, "scanner", "scanner_success")
         print(f"\n[4] Scanner complete")
         hit_summary = {k: len(v) for k, v in scanner_findings.items() if isinstance(v, list) and v}
         if hit_summary:
@@ -175,6 +185,7 @@ def main() -> int:
             world,
         )
         draft.hard_audit = audit
+        logger.emit(turn_idx, "hard_audit", "hard_audit_success", f"passed={audit['passed']}")
         print(f"\n[5] Hard Auditor complete")
         print(f"    Passed: {audit['passed']}")
         if audit["issues"]:
@@ -196,6 +207,7 @@ def main() -> int:
                     [e.__dict__ for e in writer_output.candidate_patch],
                 )
                 draft.soft_audit = {"passed": len(soft_issues) == 0, "issues": [i.__dict__ for i in soft_issues]}
+                logger.emit(turn_idx, "soft_audit", "soft_audit_success", f"issues={len(soft_issues)}")
                 print(f"\n[6] Soft Auditor ({time.time()-t0:.2f}s)")
                 if soft_issues:
                     for issue in soft_issues:
@@ -204,6 +216,7 @@ def main() -> int:
                     print(f"    No soft issues")
             except Exception as e:
                 print(f"\n[6] Soft Auditor FAILED: {e}")
+                logger.log_error(turn_idx, "soft_auditor", type(e).__name__, str(e))
                 draft.soft_audit = {"passed": True, "issues": []}
         else:
             draft.soft_audit = {"passed": False, "issues": []}
@@ -225,6 +238,7 @@ def main() -> int:
         if admitted:
             t0 = time.time()
             result = commit_turn(world, admitted, writer_output.segments)
+            logger.emit(turn_idx, "commit", "commit_success", f"turn={world.turn}")
             print(f"\n[7] Committer applied ({time.time()-t0:.2f}s)")
             print(f"    Turn now: {world.turn}")
             delta = result["delta"]
@@ -233,6 +247,7 @@ def main() -> int:
                     print(f"    {k}: {v}")
             print(f"    Player output:\n    {result['player_output'].replace(chr(10), chr(10)+'    ')}")
         else:
+            logger.emit(turn_idx, "commit", "commit_success", "nothing_admitted")
             print(f"\n[7] Committer: nothing admitted (hard audit failed)")
 
         # 8. Score
@@ -283,6 +298,7 @@ def main() -> int:
 
         # Save
         _log_turn(run_dir, turn_idx, draft, sc)
+        logger.emit(turn_idx, "turn", "turn_written", f"turn_{turn_idx:03d}.json")
         overall_scores.append(sc)
         history.append(player_input)
 
@@ -297,6 +313,23 @@ def main() -> int:
         print(f"  {sc.turn_id}: {status} | grounding={sc.grounding_score} | alignment={sc.patch_alignment_score}")
     print(f"\nLogs saved to: {run_dir}")
     print("=" * 70)
+
+    hard_failures = []
+    medium_issues = []
+    soft_issues = []
+    for sc in overall_scores:
+        hard_failures.extend(sc.hard_failures)
+        medium_issues.extend(sc.medium_issues)
+        soft_issues.extend(sc.soft_issues)
+    logger.close(
+        turns_attempted=len(turns),
+        turns_completed=len(overall_scores),
+        scorecards=[sc.to_json() for sc in overall_scores],
+        hard_failures=hard_failures,
+        medium_issues=medium_issues,
+        soft_issues=soft_issues,
+        case_id="greyfen_beer_loop",
+    )
 
     return 0 if all_pass else 1
 
