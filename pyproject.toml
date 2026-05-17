@@ -1,7 +1,7 @@
 [project]
 name = "metarpg"
-version = "0.5.2"
-description = "MetaRPG v0.5.2 - retrodictive reasonability engine with UPF bridge"
+version = "0.6.3"
+description = "MetaRPG v0.6.3 - agentic LLM narrative pipeline"
 requires-python = ">=3.11"
 dependencies = ["httpx>=0.27"]
 
@@ -10,6 +10,7 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 metarpg = "metarpg.cli:main"
+metarpg-agentic = "metarpg.agentic.play_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

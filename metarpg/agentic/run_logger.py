@@ -67,6 +67,44 @@ class RunLogger:
         self._errors_fh.flush()
         self._emit("error", turn, stage, f"{error_type}: {error_message}")
 
+    def write_turn(self, draft, turn_index: int) -> Path:
+        """Persist a completed turn draft."""
+        path = self.run_dir / f"turn_{turn_index:03d}.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(draft.to_json(), f, ensure_ascii=False, indent=2)
+        return path
+
+    def write_error_turn(
+        self,
+        draft,
+        turn_index: int,
+        error_stage: str = "",
+        error_type: str = "",
+        error_message: str = "",
+        traceback_str: str = "",
+        raw_output: str = "",
+    ) -> Path:
+        """Persist a failed turn with full error context."""
+        data = draft.to_json()
+        data["error_stage"] = error_stage
+        data["error_type"] = error_type
+        data["error_message"] = error_message
+        if traceback_str:
+            data["error_traceback"] = traceback_str
+        if raw_output:
+            data["raw_writer_output"] = raw_output
+        path = self.run_dir / f"turn_{turn_index:03d}_error.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return path
+
+    def write_scorecard(self, scorecard: dict[str, Any], turn_index: int) -> Path:
+        """Persist a scorecard alongside its turn."""
+        path = self.run_dir / f"scorecard_{turn_index:03d}.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(scorecard, f, ensure_ascii=False, indent=2)
+        return path
+
     def close(
         self,
         turns_attempted: int,
