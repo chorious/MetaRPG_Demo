@@ -1,0 +1,16 @@
+[project]
+name = "metarpg"
+version = "0.5.2"
+description = "MetaRPG v0.5.2 - retrodictive reasonability engine with UPF bridge"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+metarpg = "metarpg.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

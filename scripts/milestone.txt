@@ -1,0 +1,10 @@
+# Greyfen milestone walkthrough - PLAN_SONNET §10
+# Demonstrates the loop: ask -> belief delta -> retrodiction
+ask Mara about the mine
+observe Mara
+go to guard post
+ask Rusk about the mine
+go to tavern
+ask Mara about Iven
+help Mara
+confront Mara about the mine
