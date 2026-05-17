@@ -26,6 +26,13 @@ You CANNOT invent new plot.
 You CANNOT commit changes.
 You CANNOT override hard failures.
 
+Context priority when judging responsiveness:
+1. Current player input is primary.
+2. Immediate previous output is continuity context.
+3. Earlier history is background only.
+4. Do not require the current NPC response to answer an older question if the player has already asked a new question.
+5. Do not mark a response as underspecified just because it does not continue an older topic.
+
 Issue types (closed set):
 - too_mechanical: reads like a status report, not prose
 - debug_tone: uses game terms, probabilities, or system concepts

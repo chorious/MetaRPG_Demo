@@ -102,84 +102,96 @@ def main() -> int:
     scorecards: list[dict] = []
 
     logger = RunLogger(run_id, run_dir)
+    _run_closed = False
 
-    _clear()
-    print("=" * 60)
-    print("  MetaRPG Agentic v0.6.3 — 交互模式")
-    print("=" * 60)
-    print("\n  提示: /look 查看场景  /inv 查看背包  /save 存档  /quit 退出")
-    print("\n  你推开了灰港酒馆的门...")
-
-    packet = build_story_packet(world)
-    _print_scene(packet)
-
-    while True:
-        try:
-            raw = input("\n> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n再见。")
-            break
-
-        if not raw:
-            continue
-
-        if raw in {"/quit", "/q", "退出"}:
-            print("\n存档并退出...")
-            _save_world(world, run_dir, turn_idx)
-            hard_failures = []
-            medium_issues = []
-            soft_issues = []
-            for sc in scorecards:
-                hard_failures.extend(sc.get("hard_failures", []))
-                medium_issues.extend(sc.get("medium_issues", []))
-                soft_issues.extend(sc.get("soft_issues", []))
-            logger.close(
-                turns_attempted=turn_idx,
-                turns_completed=turn_idx,
-                scorecards=scorecards,
-                hard_failures=hard_failures,
-                medium_issues=medium_issues,
-                soft_issues=soft_issues,
-            )
-            print(f"存档: {run_dir}")
-            break
-
-        if raw in {"/look", "/l", "看"}:
-            packet = build_story_packet(world)
-            _print_scene(packet)
-            continue
-
-        if raw in {"/inv", "/i", "背包"}:
-            packet = build_story_packet(world)
-            inv = packet.get("player_context", {}).get("inventory_or_handheld", [])
-            print(f"\n  携带: {', '.join(inv) if inv else '（空）'}")
-            continue
-
-        if raw in {"/save", "存档"}:
-            path = _save_world(world, run_dir, turn_idx)
-            print(f"\n  已存档: {path.name}")
-            continue
-
-        # Normal turn
-        turn_idx += 1
-        player_input = raw
-        print(f"\n  [回合 {turn_idx}] 你: {player_input}")
-
-        result = run_agentic_turn(
-            world=world,
-            player_input=player_input,
-            turn_index=turn_idx,
-            run_id=run_id,
-            history=history,
-            run_logger=logger,
+    def _close_run() -> None:
+        nonlocal _run_closed
+        if _run_closed:
+            return
+        _run_closed = True
+        hard_failures: list[str] = []
+        medium_issues: list[str] = []
+        soft_issues: list[str] = []
+        for sc in scorecards:
+            hard_failures.extend(sc.get("hard_failures", []))
+            medium_issues.extend(sc.get("medium_issues", []))
+            soft_issues.extend(sc.get("soft_issues", []))
+        logger.close(
+            turns_attempted=turn_idx,
+            turns_completed=turn_idx,
+            scorecards=scorecards,
+            hard_failures=hard_failures,
+            medium_issues=medium_issues,
+            soft_issues=soft_issues,
         )
 
-        _print_output(result["player_output"])
-        _print_audit(result["draft"].hard_audit)
-        _print_score(result["scorecard"])
+    try:
+        _clear()
+        print("=" * 60)
+        print("  MetaRPG Agentic v0.6.3 — 交互模式")
+        print("=" * 60)
+        print("\n  提示: /look 查看场景  /inv 查看背包  /save 存档  /quit 退出")
+        print("\n  你推开了灰港酒馆的门...")
 
-        scorecards.append(result["scorecard"].to_json())
-        history.append(player_input)
+        packet = build_story_packet(world)
+        _print_scene(packet)
+
+        while True:
+            try:
+                raw = input("\n> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n再见。")
+                break
+
+            if not raw:
+                continue
+
+            if raw in {"/quit", "/q", "退出"}:
+                print("\n存档并退出...")
+                _save_world(world, run_dir, turn_idx)
+                _close_run()
+                print(f"存档: {run_dir}")
+                break
+
+            if raw in {"/look", "/l", "看"}:
+                packet = build_story_packet(world)
+                _print_scene(packet)
+                continue
+
+            if raw in {"/inv", "/i", "背包"}:
+                packet = build_story_packet(world)
+                inv = packet.get("player_context", {}).get("inventory_or_handheld", [])
+                print(f"\n  携带: {', '.join(inv) if inv else '（空）'}")
+                continue
+
+            if raw in {"/save", "存档"}:
+                path = _save_world(world, run_dir, turn_idx)
+                print(f"\n  已存档: {path.name}")
+                continue
+
+            # Normal turn
+            turn_idx += 1
+            player_input = raw
+            print(f"\n  [回合 {turn_idx}] 你: {player_input}")
+
+            result = run_agentic_turn(
+                world=world,
+                player_input=player_input,
+                turn_index=turn_idx,
+                run_id=run_id,
+                history=history,
+                run_logger=logger,
+            )
+
+            _print_output(result["player_output"])
+            _print_audit(result["draft"].hard_audit)
+            _print_score(result["scorecard"])
+
+            scorecards.append(result["scorecard"].to_json())
+            history.append(player_input)
+
+    finally:
+        _close_run()
 
     print(f"\n日志保存至: {run_dir}")
     return 0

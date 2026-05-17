@@ -67,6 +67,7 @@ def run_agentic_turn(
         if run_logger:
             run_logger.emit(turn_index, "writer", "writer_success", f"segments={len(writer_output.segments)}")
     except Exception as exc:
+        raw_writer_output = getattr(exc, "raw_text", raw_writer_output)
         if run_logger:
             run_logger.log_error(turn_index, "writer", type(exc).__name__, str(exc), traceback.format_exc())
             run_logger.write_error_turn(
@@ -78,6 +79,7 @@ def run_agentic_turn(
                 traceback_str=traceback.format_exc(),
                 raw_output=raw_writer_output,
             )
+            run_logger.write_scorecard(draft.scorecard, turn_index)
         draft.writer_output = None
         draft.final_segments = []
         draft.player_output = ""

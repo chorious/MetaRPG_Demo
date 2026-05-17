@@ -51,6 +51,41 @@ Style:
 - Concrete sensory detail is good.
 - Do not over-explain trust, belief, probability, or system reasoning.
 - Let mystery remain mystery.
+
+FORMAT PRIORITY
+- Your response must be one complete valid JSON object.
+- The JSON must be parseable by Python json.loads without repair.
+- Every object and array must be closed.
+- Every property name must use double quotes.
+- Every string must be closed before the next field begins.
+- Do not stop in the middle of a field.
+- If you are running out of space, shorten prose and close the JSON correctly.
+- Prefer 2-3 complete segments over many incomplete segments.
+- Do not include markdown fences.
+- Do not include comments.
+
+LENGTH CONTROL
+- Write enough prose to make the player's action clear and playable.
+- Prefer 2-3 complete segments.
+- Each segment should be 1-3 sentences.
+- Avoid adding extra objects, extra NPC actions, or extra assumptions just to be vivid.
+- Completeness and parseability are more important than flourish.
+
+LOCAL INVENTION RULE
+- You may introduce small plausible local details only if they do not become hard facts.
+- If you invent a concrete object in the player's possession, declare it in candidate_patch or mark it as an assumption requiring audit.
+- If inventory_or_handheld is empty, do not state that the player already owns specific items unless candidate_patch proposes reveal_inventory or acquire_item.
+- Tavern ambience may include generic smell, noise, warmth, cups, benches, and unnamed patrons.
+- Named items, money, weapons, notes, keys, food in the player's pack, or NPC gifts must be represented in candidate_patch.
+
+STOP CONDITION
+Before finishing, mentally verify:
+1. JSON starts with { and ends with }.
+2. All arrays are closed.
+3. All segment objects are closed.
+4. candidate_patch is an array even if empty.
+5. assumptions is an array even if empty.
+6. risk_notes is an array even if empty.
 """
 
 
@@ -101,12 +136,32 @@ Do not include explanations outside JSON.
 """
 
 
+_REPAIR_PROMPT = """Your previous output is invalid JSON.
+Fix JSON syntax only.
+Do not change story content.
+Do not add or remove story facts.
+Do not improve prose.
+Return one valid JSON object only.
+It must parse with Python json.loads without repair.
+
+JSON error:
+{error}
+
+Invalid output:
+{raw}
+"""
+
+
 def run_writer(
     story_packet: dict[str, Any],
     player_input: str,
     client: LlmClient | None = None,
 ) -> WriterOutput:
-    """Call Writer LLM and parse output."""
+    """Call Writer LLM and parse output.
+
+    If first parse fails, attempts one JSON syntax repair call at temperature=0.
+    If repair also fails, raises WriterOutputError with raw text preserved.
+    """
     if client is None:
         client = make_client("flash")
     if client is None:
@@ -121,8 +176,21 @@ def run_writer(
     raw_text = client.chat(messages, temperature=0.7)
     try:
         parsed = _parse_json_safe(raw_text)
-    except Exception as exc:
-        raise WriterOutputError(str(exc), raw_text=raw_text) from exc
+    except Exception as first_exc:
+        # One JSON syntax repair pass at temperature=0
+        repair_msg = _REPAIR_PROMPT.format(error=str(first_exc), raw=raw_text[:4000])
+        try:
+            repair_text = client.chat(
+                [
+                    {"role": "system", "content": "You are a JSON repair tool. Fix syntax only."},
+                    {"role": "user", "content": repair_msg},
+                ],
+                temperature=0.0,
+            )
+            parsed = _parse_json_safe(repair_text)
+            raw_text = repair_text  # successful repair replaces raw for logging
+        except Exception:
+            raise WriterOutputError(str(first_exc), raw_text=raw_text) from first_exc
 
     segments = []
     for seg_data in parsed.get("segments", []):
