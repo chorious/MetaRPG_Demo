@@ -273,6 +273,10 @@ class WorldState:
     # v0.3.1 subject-bound event hooks
     hooks: dict[str, EventHook] = field(default_factory=dict)              # hook_id -> EventHook
 
+    # v0.6.1 agentic turn continuity
+    journal_notes: list[str] = field(default_factory=list)
+    turn_event_log: list[str] = field(default_factory=list)
+
     def get_relation(self, a: str, b: str) -> Relation | None:
         return self.relations.get((a, b))
 

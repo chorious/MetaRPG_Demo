@@ -1,0 +1,20 @@
+{
+  "id": "greyfen_003_drink_all",
+  "initial_session": "greyfen_default",
+  "history": [
+    "要了一杯啤酒",
+    "耸了耸肩 \"这杯酒真不错\""
+  ],
+  "player_input": "一饮而尽",
+  "expected_interpretation": "玩家喝完上一回合得到的酒",
+  "must_include_effect_kinds": ["consume_item"],
+  "may_include_effect_kinds": ["transient_event", "observe_reaction"],
+  "must_not_include_effect_kinds": ["knowledge_transfer", "move"],
+  "forbidden_text": ["拉斯克在角落", "矿井密道", "含糊的话", "player_spoke_unclearly"],
+  "must_not_raw_events": true,
+  "hidden_facts_must_not_leak": ["secret_mine_entrance"],
+  "expected_claim_constraints": [
+    "no_npc_inner_state_hidden_fact",
+    "no_absent_entity_action"
+  ]
+}
