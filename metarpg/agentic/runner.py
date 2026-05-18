@@ -41,6 +41,8 @@ from metarpg.agentic.schemas import (
 from metarpg.agentic.scorecard import TurnScorecard
 from metarpg.agentic.soft_auditor_agent import run_soft_auditor
 from metarpg.agentic.story_packet import build_story_packet
+from metarpg.agentic.entity_lifecycle import tick_all_present
+from metarpg.agentic.time_flow import advance_time
 from metarpg.agentic.translator_agent import run_translator
 from metarpg.agentic.writer_agent import (
     WriterOutputError,
@@ -233,6 +235,13 @@ def run_agentic_turn(
     else:
         if run_logger:
             run_logger.emit(turn_index, "commit", "commit_success", "nothing_admitted")
+
+    # Primitive A: advance time after every turn (even nothing_admitted)
+    advance_time(world)
+
+    # Primitive B: tick visible entities
+    present = set(story_packet.get("scene", {}).get("visible_entities", []))
+    tick_all_present(world, present)
 
     # 9. Scorecard ----------------------------------------------------------
     sc = _build_scorecard(

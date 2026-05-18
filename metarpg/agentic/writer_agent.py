@@ -96,6 +96,17 @@ Before finishing, mentally verify:
 4. candidate_patch is an array even if empty.
 5. assumptions is an array even if empty.
 6. risk_notes is an array even if empty.
+
+TIME AWARENESS
+The story_packet includes current_time. All NPC states must reflect time:
+- Early morning (5–8): fresh, purposeful
+- Morning (9–11): alert, working
+- Noon (12–13): busy, focused, loud
+- Afternoon (14–17): settled, talkative
+- Evening (18–20): tired, reflective, slower
+- Night (21–23): weary, cautious, quiet
+- Late night (0–4): exhausted, irritable, close to sleep
+NPC movement and dialogue pace should shift with these tones.
 """
 
 

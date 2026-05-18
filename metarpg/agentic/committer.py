@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from metarpg.agentic.schemas import CandidatePatchEffect, Segment
-from metarpg.models import Fact, Knowledge, WorldState
+from metarpg.models import EntityState, Fact, Knowledge, WorldState
 
 
 def apply_admitted_patch(
@@ -147,8 +147,28 @@ def commit_turn(
     admitted_patch: list[CandidatePatchEffect],
     final_segments: list[Segment],
 ) -> dict[str, Any]:
-    """Full commit: apply patch and increment turn."""
+    """Full commit: apply patch, increment turn, auto-init new entities."""
     world.turn += 1
     result = apply_admitted_patch(world, admitted_patch, final_segments)
     result["turn"] = world.turn
+    # v0.6.6: ensure all known NPCs have an EntityState
+    for npc in world.npcs:
+        if npc not in world.entity_states:
+            world.entity_states[npc] = EntityState(name=npc)
+    # Also scan segment text for any named entity that slipped in
+    _auto_init_new_entities(world, final_segments)
     return result
+
+
+def _auto_init_new_entities(world: WorldState, segments: list[Segment]) -> None:
+    """Create EntityState for any named entity not yet tracked."""
+    for seg in segments:
+        text = seg.text
+        # Known NPCs
+        for npc in world.npcs:
+            if npc in text and npc not in world.entity_states:
+                world.entity_states[npc] = EntityState(name=npc)
+        # Known locations (some may be named entities too)
+        for loc in world.locations:
+            if loc in text and loc not in world.entity_states:
+                world.entity_states[loc] = EntityState(name=loc)

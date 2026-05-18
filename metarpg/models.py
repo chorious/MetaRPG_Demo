@@ -277,6 +277,12 @@ class WorldState:
     journal_notes: list[str] = field(default_factory=list)
     turn_event_log: list[str] = field(default_factory=list)
 
+    # v0.6.6 temporal primitive (world_time)
+    world_time: dict[str, int] = field(default_factory=lambda: {"turn": 0, "hour": 12, "day": 1})
+
+    # v0.6.6 entity lifecycle (Primitive B)
+    entity_states: dict[str, "EntityState"] = field(default_factory=dict)
+
     def get_relation(self, a: str, b: str) -> Relation | None:
         return self.relations.get((a, b))
 
@@ -285,6 +291,22 @@ class WorldState:
         if key not in self.relations:
             self.relations[key] = Relation(a, b)
         return self.relations[key]
+
+
+# ---------------------------------------------------------------------------
+# Entity lifecycle (v0.6.6)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EntityState:
+    """Per-entity soft state: energy, mood, life_state, temporal tracking."""
+
+    name: str
+    energy: float = 1.0  # 0.0–1.0, decays per turn
+    mood: str = "neutral"
+    life_state: str = "alive"  # alive | asleep | injured | dead
+    last_seen_turn: int = 0
+    last_seen_location: str = ""
 
 
 @dataclass

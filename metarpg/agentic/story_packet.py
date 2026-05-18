@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from metarpg.agentic.entity_lifecycle import ensure_entity, surface_for_npc
+from metarpg.agentic.time_flow import current_time_str
 from metarpg.models import Fact, WorldState
 
 
@@ -131,11 +133,17 @@ def _npc_surface_state(world: WorldState, npcs: list[str]) -> dict[str, dict[str
         # Deduplicate while preserving order
         seen: set[str] = set()
         deduped = [s for s in surface if not (s in seen or seen.add(s))]
+        # v0.6.6 entity lifecycle: energy + mood
+        entity = ensure_entity(world, npc)
+        entity_surface = surface_for_npc(entity)
         state[npc] = {
             "role": roles[0] if roles else "unknown",
             "visible_mood": deduped,
             "can_speak": True,
             "_auditor_relations": raw_relations,
+            "energy": entity_surface["energy"],
+            "mood": entity_surface["mood"],
+            "life_state": entity_surface["life_state"],
         }
     return state
 
@@ -233,6 +241,7 @@ def build_story_packet(world: WorldState) -> dict[str, Any]:
             "recent_events": recent,
             "inventory_or_handheld": inventory,
             "inventory_events": _inventory_events(world),
+            "current_time": current_time_str(world),
         },
         "npc_surface": npc_surface,
         "allowed_effect_kinds": allowed_effects,
