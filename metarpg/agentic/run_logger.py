@@ -115,6 +115,7 @@ class RunLogger:
         soft_issues: list[str],
         case_id: str = "greyfen_interactive",
         models: dict[str, str] | None = None,
+        v064_stats: dict[str, Any] | None = None,
     ) -> None:
         self._emit("run_end", turns_attempted, "run", f"Completed {turns_completed}/{turns_attempted} turns")
         self._events_fh.close()
@@ -142,6 +143,8 @@ class RunLogger:
             "soft_issues": soft_issues,
             "acceptable": len(hard_failures) == 0,
         }
+        if v064_stats:
+            manifest["v064"] = v064_stats
         with open(self.run_dir / "run_manifest.json", "w", encoding="utf-8") as f:
             json.dump(manifest, f, ensure_ascii=False, indent=2)
 
@@ -161,5 +164,16 @@ class RunLogger:
             lines.append(
                 f"- turn_{i:03d}: experience {sc.get('player_experience_score', 0):.2f} / grounding {sc.get('grounding_score', 0):.2f}"
             )
+        if v064_stats:
+            lines.extend([
+                "",
+                "## v0.6.6 Stats",
+                f"- bold pass rate:        {v064_stats.get('bold_pass_rate', 0):.2f}",
+                f"- safe_loose pass rate:  {v064_stats.get('safe_loose_pass_rate', 0):.2f}",
+                f"- safe_strict pass rate: {v064_stats.get('safe_strict_pass_rate', 0):.2f}",
+                f"- fallback count:        {v064_stats.get('fallback_count', 0)}",
+                f"- median turn wall time: {v064_stats.get('median_turn_wall_time_s', 0):.2f}s",
+                f"- winner distribution:   {v064_stats.get('winner_distribution', {})}",
+            ])
         with open(self.run_dir / "summary.md", "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")

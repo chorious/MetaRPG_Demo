@@ -1,0 +1,19 @@
+{
+  "id": "greyfen_007_absent_npc_talk",
+  "initial_session": "greyfen_default",
+  "history": [
+    "要了一杯啤酒",
+    "耸了耸肩 \"这杯酒真不错\"",
+    "一饮而尽",
+    "\"这附近发生了什么事情么？我是新来的，嘿嘿\"",
+    "静静地记下了这条信息",
+    "我抽出光剑斩向 Mara"
+  ],
+  "player_input": "找 Rusk 说话",
+  "expected_interpretation": "玩家试图与不在场的 NPC 交谈",
+  "expected_winner_name": "safe_loose|safe_strict|fallback",
+  "must_not_include_effect_kinds": ["knowledge_transfer", "move"],
+  "forbidden_text": ["Rusk 说", "拉斯克说", "hard_fail", "absent"],
+  "must_include_text": ["四处张望", "没", "空气", "安静"],
+  "hidden_facts_must_not_leak": ["mara_at_old_mine"]
+}

@@ -1,109 +1,78 @@
-"""Editor Agent — local Qwen3.6.
+"""Editor Agent — code-only RewriteTask generator (v0.6.4-era shape).
 
-Creates localized rewrite tasks (not prose directly).
-Preserves passing segments.
+Not on the active turn path. In v0.6.6 the safety guarantee comes from
+the parallel Safe Writers + decision tree, NOT from in-turn rewrites.
+This module remains as a structured target for future repair loops:
+
+  hard_audit issues -> list[RewriteTask] -> (consumer chooses how to apply)
+
+`generate_rewrite_tasks` is pure code: it inspects the AuditIssue type
+and emits one RewriteTask per issue, with the original `repair_instruction`
+copied verbatim. The legacy `run_editor_rewrite` wrapper is retained for
+backward-compat imports but returns the original WriterOutput unchanged
+(no LLM call).
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from metarpg.agentic.model_client import LlmClient, make_client
-from metarpg.agentic.schemas import AuditIssue, RewriteTask, Segment
+from metarpg.agentic.schemas import RewriteTask, WriterOutput
 
 
-_SYSTEM_PROMPT = """You are a repair editor for an RPG narrative engine.
-
-Your job: given failing audit issues, produce localized rewrite tasks.
-
-Rules:
-- Prefer local repair over full rewrite.
-- Preserve passing segments. Do not touch them.
-- Do not alter admitted patch unless patch itself failed.
-- If patch failed, request patch + affected segment rewrite.
-- If only prose failed, request narrative-only rewrite.
-- Output STRICT JSON rewrite tasks.
-
-Allowed operations: replace, delete, insert_after
-"""
-
-
-def _build_prompt(
-    segments: list[Segment],
-    issues: list[AuditIssue],
-    admitted_patch: list[dict[str, Any]],
-) -> str:
-    return f"""Current segments:
-{json.dumps([{"id": s.id, "type": s.type, "text": s.text} for s in segments], ensure_ascii=False, indent=2)}
-
-Audit issues:
-{json.dumps([{"severity": i.severity, "type": i.type, "segment_id": i.segment_id, "reason": i.reason, "repair_instruction": i.repair_instruction} for i in issues], ensure_ascii=False, indent=2)}
-
-Admitted patch:
-{json.dumps(admitted_patch, ensure_ascii=False, indent=2)}
-
-Produce rewrite tasks as JSON:
-{{
-  "rewrite_tasks": [
-    {{
-      "segment_id": "s1",
-      "operation": "replace",
-      "severity": "hard_fail",
-      "reason": "...",
-      "keep_context_segments": ["s0"],
-      "allowed_patch_refs": ["observe_reaction:mara:brief_notice"],
-      "instruction": "Rewrite this segment as external observable reaction only."
-    }}
-  ]
-}}
-"""
+_OP_BY_TYPE: dict[str, str] = {
+    "hidden_fact_leak":                 "replace",
+    "absent_entity_action":             "delete",
+    "remote_event_claim":               "delete",
+    "raw_debug_exposure":               "replace",
+    "invalid_effect_kind":              "replace",
+    "npc_speech_without_patch_support": "replace",
+    "npc_offer_without_patch_support":  "replace",
+    "patch_without_support":            "replace",
+    "state_change_without_support":     "replace",
+    "schema_violation":                 "replace",
+    "locked_fact_contradiction":        "delete",
+    "unregistered_concrete_prop":       "replace",
+}
 
 
-def run_editor(
-    segments: list[Segment],
-    issues: list[AuditIssue],
-    admitted_patch: list[dict[str, Any]],
-    client: LlmClient | None = None,
+def generate_rewrite_tasks(
+    hard_issues: list[dict[str, Any]],
+    medium_issues: list[dict[str, Any]] | None = None,
 ) -> list[RewriteTask]:
-    if client is None:
-        client = make_client("local")
-    if client is None:
-        return []
+    """Convert hard/medium audit issues into segment-level rewrite tasks.
 
-    prompt = _build_prompt(segments, issues, admitted_patch)
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
-
-    try:
-        raw_text = client.chat(messages, temperature=0.3)
-        parsed = _parse_json_safe(raw_text)
-    except Exception:
-        return []
-
+    The caller decides how to satisfy each task (LLM, code patch, manual).
+    """
     tasks: list[RewriteTask] = []
-    for t in parsed.get("rewrite_tasks", []):
-        tasks.append(
-            RewriteTask(
-                segment_id=t.get("segment_id", ""),
-                operation=t.get("operation", "replace"),
-                severity=t.get("severity", "soft_issue"),
-                reason=t.get("reason", ""),
-                keep_context_segments=t.get("keep_context_segments", []),
-                allowed_patch_refs=t.get("allowed_patch_refs", []),
-                instruction=t.get("instruction", ""),
-            )
-        )
+    for issue in hard_issues or []:
+        tasks.append(_issue_to_task(issue, severity="hard"))
+    for issue in medium_issues or []:
+        tasks.append(_issue_to_task(issue, severity="medium"))
     return tasks
 
 
-def _parse_json_safe(text: str) -> dict[str, Any]:
-    text = text.strip()
-    if text.startswith("```json"):
-        text = text[7:]
-    if text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    return json.loads(text.strip())
+def _issue_to_task(issue: dict[str, Any], severity: str) -> RewriteTask:
+    type_ = issue.get("type", "")
+    return RewriteTask(
+        segment_id=issue.get("segment_id") or "",
+        operation=_OP_BY_TYPE.get(type_, "replace"),
+        severity=severity,
+        reason=issue.get("reason", ""),
+        keep_context_segments=[],
+        allowed_patch_refs=[],
+        instruction=issue.get("repair_instruction", ""),
+    )
+
+
+def run_editor_rewrite(
+    original: WriterOutput,
+    hard_issues: list[dict[str, Any]],
+    feasibility_facts: list[str],
+    client=None,
+) -> WriterOutput:
+    """Legacy entry point. v0.6.6: returns the original output unchanged.
+
+    Repair has moved to parallel Safe Writers + decision tree. This stub
+    exists so existing imports keep working without surprising side effects.
+    """
+    return original

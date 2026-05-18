@@ -1,0 +1,16 @@
+{
+  "id": "greyfen_004_ambient_guests_pass",
+  "initial_session": "greyfen_default",
+  "history": [
+    "要了一杯啤酒",
+    "耸了耸肩 \"这杯酒真不错\"",
+    "一饮而尽"
+  ],
+  "player_input": "远处三两桌客人偶尔瞥你一眼。",
+  "expected_interpretation": "酒馆中无名背景客人的存在——ambient detail",
+  "expected_winner_name": "bold",
+  "must_not_include_effect_kinds": ["knowledge_transfer", "move", "acquire_item"],
+  "forbidden_text": ["hard_fail", "absent_entity_action"],
+  "must_include_text": ["客人"],
+  "hidden_facts_must_not_leak": ["secret_smuggling_ring"]
+}

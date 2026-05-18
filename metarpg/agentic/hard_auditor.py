@@ -82,7 +82,10 @@ def run_hard_audit(
     hard_issues.extend(hi)
     medium_issues.extend(mi)
 
-    # 7. Contradiction with locked facts
+    # 7. Schema violation check (outside-world concepts in narrative)
+    medium_issues.extend(_check_schema_violation(segments, story_packet))
+
+    # 8. Contradiction with locked facts
     hard_issues.extend(_check_locked_facts(candidate_patch, pre_world))
 
     claim_count = len(translated_claims)
@@ -261,6 +264,7 @@ def _check_patch_validity(
             )
 
     # Object possession check for consume_item
+    recent_events = story_packet.get("player_context", {}).get("recent_events", [])
     for eff in candidate_patch:
         if eff.kind == "consume_item":
             item = eff.args.get("item", "")
@@ -269,29 +273,38 @@ def _check_patch_validity(
                     f.predicate == "has" and f.args == ("player", item)
                     for f in pre_world.facts
                 )
+                # Also accept if a recent event mentions the item (e.g. a
+                # previous turn's transient_event "Mara poured ale for player"
+                # that did not commit a has-fact).
+                if not player_has and recent_events:
+                    item_lower = item.lower()
+                    for evt in recent_events:
+                        if item_lower in str(evt).lower():
+                            player_has = True
+                            break
                 if not player_has:
-                    # v0.6.1: downgrade to medium if item is scene-plausible ambient
                     inventory = story_packet.get("player_context", {}).get("inventory_or_handheld", [])
                     visible_objs = story_packet.get("scene", {}).get("visible_objects", [])
                     if item in inventory or item in visible_objs:
-                        issues.append(
-                            AuditIssue(
-                                severity="hard_fail",
-                                type="state_change_without_support",
-                                evidence=str(eff.args),
-                                reason=f"Player does not have '{item}' to consume.",
-                                repair_instruction="Add acquire_item first or remove consume_item.",
-                            )
-                        )
-                    else:
-                        # Medium: unregistered concrete prop usage
+                        # Medium: packet says player has it but facts disagree (data inconsistency)
                         issues.append(
                             AuditIssue(
                                 severity="medium_issue",
                                 type="unregistered_concrete_prop",
                                 evidence=item,
-                                reason=f"Item '{item}' is not in inventory or visible_objects.",
+                                reason=f"Item '{item}' listed in inventory/visible_objects but no has-fact supports it.",
                                 repair_instruction="Use acquire_item first, or use transient_event instead.",
+                            )
+                        )
+                    else:
+                        # Hard: consuming something that is nowhere in the world
+                        issues.append(
+                            AuditIssue(
+                                severity="hard_fail",
+                                type="state_change_without_support",
+                                evidence=str(eff.args),
+                                reason=f"Player does not have '{item}' to consume and it is not present in scene.",
+                                repair_instruction="Add acquire_item first or remove consume_item.",
                             )
                         )
 
@@ -324,8 +337,8 @@ def _check_alignment(
 
     patch_kinds = {eff.kind for eff in candidate_patch}
 
-    # NPC speech claims require patch support
-    speech_claims = [c for c in claims if c.kind in {"npc_speech", "npc_offer"}]
+    # NPC speech claims require patch support (offer is handled separately)
+    speech_claims = [c for c in claims if c.kind == "npc_speech"]
     for claim in speech_claims:
         has_support = any(
             pk in patch_kinds
@@ -333,7 +346,6 @@ def _check_alignment(
         )
         # transient_event can support speech if it explicitly describes speech
         if not has_support and "transient_event" in patch_kinds:
-            # Accept transient_event as support for speech if no better patch exists
             has_support = True
 
         if not has_support:
@@ -343,12 +355,12 @@ def _check_alignment(
                     type="npc_speech_without_patch_support",
                     segment_id=claim.segment_id,
                     evidence=claim.evidence_span,
-                    reason="NPC speech or offer creates a concrete interaction opportunity not represented in candidate_patch.",
-                    repair_instruction="Add npc_speech/offer_refill/create_affordance patch effects, or rewrite the segment as a silent observable reaction.",
+                    reason="NPC speech creates a concrete interaction opportunity not represented in candidate_patch.",
+                    repair_instruction="Add knowledge_transfer/reveal/create_hook patch effects, or rewrite the segment as a silent observable reaction.",
                 )
             )
 
-    # NPC offer claims require even stronger support
+    # NPC offer claims require stronger support than plain speech
     offer_claims = [c for c in claims if c.kind == "npc_offer"]
     for claim in offer_claims:
         has_offer_patch = any(
@@ -442,6 +454,39 @@ def _check_alignment(
                 )
 
     return hard_issues, medium_issues
+
+
+def _check_schema_violation(
+    segments: list[Segment],
+    story_packet: dict[str, Any],
+) -> list[AuditIssue]:
+    """Flag mentions of concepts outside the world schema (e.g. lightsabers in a
+    fantasy tavern).  Kept as medium_issue because ambient texture may
+    innocently reference them; the Feasibility Agent is the first line of
+    defence.
+    """
+    issues: list[AuditIssue] = []
+    violations = set(story_packet.get("forbidden", {}).get("schema_violations", []))
+    if not violations:
+        return issues
+
+    for seg in segments:
+        text_lower = seg.text.lower()
+        for term in violations:
+            if term.lower() in text_lower:
+                issues.append(
+                    AuditIssue(
+                        severity="medium_issue",
+                        type="schema_violation",
+                        segment_id=seg.id,
+                        evidence=term,
+                        reason=f"Narrative references '{term}' which is outside this world's schema.",
+                        repair_instruction="Reframe using in-world concepts or physical sensation.",
+                    )
+                )
+                # One issue per segment is enough
+                break
+    return issues
 
 
 def _check_locked_facts(

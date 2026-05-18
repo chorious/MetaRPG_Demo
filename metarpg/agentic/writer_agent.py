@@ -1,9 +1,19 @@
-"""Writer Agent — DeepSeek Flash.
+"""Writer Agent — DeepSeek Flash (Bold) or local Qwen (Safe modes).
 
-Interprets player action in local context and writes segmented player-facing
-narrative with candidate patch effects.
+Interprets the player's action in local context and writes segmented
+player-facing narrative with candidate patch effects.
 
-Uses prompt from MetaRPG_Agent_story_prompt_reference.md §2-3.
+Modes:
+- bold              Flash, temperature 0.7-0.8, no feasibility ingestion.
+                    Lives in parallel with Feasibility; failure is expected
+                    when input is willful.
+- safe_loose        Qwen, temperature 0.3, sees feasibility facts as soft
+                    constraints. Bold prompt + facts.
+- safe_strict_*     Qwen, temperature 0.3-0.5, each variant tied to one
+                    world_response_kind. Templates are vibe guidance, not
+                    task checklists.
+
+Uses the canonical prompt from MetaRPG_Agent_story_prompt_reference.md.
 """
 from __future__ import annotations
 
@@ -11,7 +21,7 @@ import json
 from typing import Any
 
 from metarpg.agentic.model_client import LlmClient, make_client
-from metarpg.agentic.schemas import CandidatePatchEffect, Segment, WriterOutput
+from metarpg.agentic.schemas import CandidatePatchEffect, FeasibilityReport, Segment, WriterOutput
 
 
 class WriterOutputError(RuntimeError):
@@ -89,8 +99,120 @@ Before finishing, mentally verify:
 """
 
 
-def _build_prompt(story_packet: dict[str, Any], player_input: str) -> str:
-    return f"""STORY PACKET
+_SAFE_LOOSE_PROMPT = _SYSTEM_PROMPT + """
+
+SAFE MODE — LOOSE
+You are running as the loose safety candidate.
+FEASIBILITY CONTEXT (if present) lists facts you MUST respect in the prose.
+preserve_player_voice lists key words you MUST surface in the narrative,
+even if the action they describe fails in-world.
+Stay in vivid local prose. Do not narrate refusals as the system's voice —
+let the world push back through body, sound, and atmosphere.
+"""
+
+
+_SAFE_PROMPT_ABSENCE = _SYSTEM_PROMPT + """
+
+SAFE MODE — ABSENCE
+The player has invoked something that does not exist in this world.
+Do NOT introduce that thing as if it were real.
+Instead, let the absence be felt in the body and the room:
+  - a gesture that reaches and finds nothing
+  - a weight that should be in the hand and is not
+  - a beat of silence where reality refuses the player's framing
+NPCs may observe the misfire but should not name what isn't there.
+preserve_player_voice words MUST appear in your prose, even if the action
+they describe lands in empty space.
+Do not write "this does not exist" or any system-level statement.
+"""
+
+
+_SAFE_PROMPT_FRICTION = _SYSTEM_PROMPT + """
+
+SAFE MODE — FRICTION
+The action is possible in principle, but the world resists.
+Show resistance with concrete sensory weight:
+  - a door that gives an inch and then locks itself again
+  - an NPC who hears and turns, but withholds the answer
+  - effort that costs more than the player thought
+The player's voice (preserve_player_voice) must appear in some form.
+Do not negate the action outright. Let the friction be the response.
+"""
+
+
+_SAFE_PROMPT_REFRAMING = _SYSTEM_PROMPT + """
+
+SAFE MODE — REFRAMING
+The player's framing of the action assumes a mechanism this world does
+not have (telepathy, magic, modern technology). Re-anchor the action in
+something this world DOES have:
+  - reading minds becomes reading faces, posture, what eyes do not say
+  - magic becomes ritual, herb, or a story whose truth is uncertain
+  - tech becomes a tool or absence-of-a-tool with a craftsman's name
+preserve_player_voice must still surface, even if the surrounding world
+quietly translates it. Do not lecture the player on the swap.
+"""
+
+
+_SAFE_PROMPT_ACCEPT = _SYSTEM_PROMPT + """
+
+SAFE MODE — ACCEPT
+The input is feasible. Carry the scene gently:
+  - take the player's stated action at face value
+  - keep the segments short and grounded
+  - if FEASIBILITY CONTEXT supplies facts, weave them in as background
+preserve_player_voice words should appear naturally in the prose.
+"""
+
+
+_MODE_TO_PROMPT: dict[str, tuple[str, str]] = {
+    "bold":               (_SYSTEM_PROMPT,         "flash"),
+    "safe_loose":         (_SAFE_LOOSE_PROMPT,     "local"),
+    "safe_strict_absence":   (_SAFE_PROMPT_ABSENCE,   "local"),
+    "safe_strict_friction":  (_SAFE_PROMPT_FRICTION,  "local"),
+    "safe_strict_reframing": (_SAFE_PROMPT_REFRAMING, "local"),
+    "safe_strict_accept":    (_SAFE_PROMPT_ACCEPT,    "local"),
+}
+
+
+def _select_system_prompt(mode: str) -> tuple[str, str]:
+    """Return (system_prompt, default_client_kind) for the requested mode."""
+    if mode == "bold":
+        # Identity-preserved for tests that compare against _SYSTEM_PROMPT.
+        return _SYSTEM_PROMPT, "flash"
+    if mode in _MODE_TO_PROMPT:
+        return _MODE_TO_PROMPT[mode]
+    raise ValueError(
+        f"Unknown writer mode '{mode}'. Expected one of: {sorted(_MODE_TO_PROMPT)}"
+    )
+
+
+def _build_feasibility_block(feasibility: FeasibilityReport | None) -> str:
+    """Render the facts + voice anchors as a user-prompt block. Empty if None."""
+    if feasibility is None:
+        return ""
+    facts = feasibility.feasibility_facts or []
+    voice = feasibility.preserve_player_voice or []
+    if not facts and not voice:
+        return ""
+    parts = ["FEASIBILITY CONTEXT"]
+    if facts:
+        parts.append("feasibility_facts:")
+        for f in facts:
+            parts.append(f"  - {f}")
+    if voice:
+        parts.append("preserve_player_voice (words that MUST appear in prose):")
+        parts.append("  " + ", ".join(voice))
+    return "\n".join(parts) + "\n\n"
+
+
+def _build_prompt(
+    story_packet: dict[str, Any],
+    player_input: str,
+    feasibility: FeasibilityReport | None = None,
+) -> str:
+    feas_block = _build_feasibility_block(feasibility)
+    return f"""{feas_block}STORY PACKET
 {json.dumps(story_packet, ensure_ascii=False, indent=2)}
 
 PLAYER INPUT
@@ -152,28 +274,42 @@ Invalid output:
 """
 
 
+def safe_mode_for_kind(world_response_kind: str) -> str:
+    """Map a feasibility world_response_kind to its safe_strict_* mode name."""
+    kind = (world_response_kind or "accept").strip().lower()
+    if kind not in {"absence", "friction", "reframing", "accept"}:
+        kind = "accept"
+    return f"safe_strict_{kind}"
+
+
 def run_writer(
     story_packet: dict[str, Any],
     player_input: str,
     client: LlmClient | None = None,
+    *,
+    mode: str = "bold",
+    feasibility: FeasibilityReport | None = None,
+    temperature: float = 0.7,
 ) -> WriterOutput:
     """Call Writer LLM and parse output.
 
-    If first parse fails, attempts one JSON syntax repair call at temperature=0.
-    If repair also fails, raises WriterOutputError with raw text preserved.
+    mode selects both the system prompt and the default LLM kind. Pass a
+    pre-built client to override the routing (the test capture client,
+    or a pool slot).
     """
+    system_prompt, default_kind = _select_system_prompt(mode)
     if client is None:
-        client = make_client("flash")
+        client = make_client(default_kind)
     if client is None:
-        raise RuntimeError("Writer LLM client unavailable (check set.env)")
+        raise RuntimeError(f"Writer LLM client unavailable (mode={mode})")
 
-    prompt = _build_prompt(story_packet, player_input)
+    prompt = _build_prompt(story_packet, player_input, feasibility=feasibility)
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt},
     ]
 
-    raw_text = client.chat(messages, temperature=0.7)
+    raw_text = client.chat(messages, temperature=temperature)
     try:
         parsed = _parse_json_safe(raw_text)
     except Exception as first_exc:
@@ -186,6 +322,7 @@ def run_writer(
                     {"role": "user", "content": repair_msg},
                 ],
                 temperature=0.0,
+                request_timeout=20.0,
             )
             parsed = _parse_json_safe(repair_text)
             raw_text = repair_text  # successful repair replaces raw for logging

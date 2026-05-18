@@ -33,26 +33,56 @@ class LlmClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
-        self.client = httpx.Client(timeout=60.0)
+        # Structured timeout: slow streams from thinking-mode models can
+        # keep a connection alive for minutes.  Read=90s catches that.
+        self.client = httpx.Client(
+            timeout=httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=10.0)
+        )
 
-    def chat(self, messages: list[dict[str, str]], temperature: float = 0.7) -> str:
-        payload = {
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        thinking: bool = False,
+        request_timeout: float | None = None,
+    ) -> str:
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
         }
         if "qwen" in self.model.lower():
             payload["chat_template_kwargs"] = {"enable_thinking": False}
+        # DeepSeek V4: thinking-mode defaults to on and silently ignores
+        # temperature/top_p.  Explicitly disable it when caller wants
+        # temperature to take effect.
+        if "deepseek" in self.model.lower() and not thinking:
+            payload["extra_body"] = {"thinking": {"type": "disabled"}}
 
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        resp = self.client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
+        timeout = (
+            httpx.Timeout(connect=10.0, read=request_timeout, write=10.0, pool=10.0)
+            if request_timeout is not None
+            else self.client.timeout
+        )
+        resp = self.client.post(
+            f"{self.base_url}/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=timeout,
+        )
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
-    def chat_json(self, messages: list[dict[str, str]], temperature: float = 0.4) -> dict[str, Any]:
-        text = self.chat(messages, temperature=temperature)
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.4,
+        thinking: bool = False,
+    ) -> dict[str, Any]:
+        text = self.chat(messages, temperature=temperature, thinking=thinking)
         # Strip markdown code fences if present
         if text.startswith("```json"):
             text = text[7:]

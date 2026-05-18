@@ -1,0 +1,16 @@
+{
+  "id": "greyfen_003_npc_offer_needs_patch",
+  "initial_session": "greyfen_default",
+  "history": [
+    "要了一杯啤酒",
+    "耸了耸肩 \"这杯酒真不错\"",
+    "一饮而尽"
+  ],
+  "player_input": "玛拉说：“再来一杯？”",
+  "expected_interpretation": "NPC 发出具体要约——必须有 patch 支撑",
+  "expected_winner_name": "safe_loose|safe_strict|fallback",
+  "must_not_include_effect_kinds": ["move", "acquire_item"],
+  "expected_hard_issues": ["npc_offer_without_patch_support"],
+  "forbidden_text": ["hard_fail"],
+  "hidden_facts_must_not_leak": []
+}

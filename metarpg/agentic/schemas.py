@@ -78,6 +78,20 @@ class RewriteTask:
 
 
 # ---------------------------------------------------------------------------
+# Feasibility Report — lightweight pre-check on player input
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FeasibilityReport:
+    feasibility_facts: list[str] = field(default_factory=list)
+    preserve_player_voice: list[str] = field(default_factory=list)
+    world_response_kind: str = "accept"  # absence | friction | reframing | accept
+    stated_action: str = ""
+    stated_props: list[str] = field(default_factory=list)
+    stated_targets: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Writer Output
 # ---------------------------------------------------------------------------
 
@@ -121,6 +135,11 @@ class TurnDraft:
     writer_output: WriterOutput | None = None
     translated_claims: list[NarrativeClaim] = field(default_factory=list)
     deterministic_scan: dict[str, Any] = field(default_factory=dict)
+    feasibility: FeasibilityReport | None = None
+    writer_candidates: dict[str, WriterOutput] = field(default_factory=dict)
+    candidate_audits: dict[str, dict[str, Any]] = field(default_factory=dict)
+    winner_name: str = ""
+    turn_wall_time_s: float = 0.0
     hard_audit: dict[str, Any] = field(default_factory=dict)
     soft_audit: dict[str, Any] = field(default_factory=dict)
     editor_tasks: list[RewriteTask] = field(default_factory=list)

@@ -1,0 +1,17 @@
+{
+  "id": "greyfen_005_notebook_medium_issue",
+  "initial_session": "greyfen_default",
+  "history": [
+    "要了一杯啤酒",
+    "耸了耸肩 \"这杯酒真不错\"",
+    "一饮而尽",
+    "\"这附近发生了什么事情么？我是新来的，嘿嘿\""
+  ],
+  "player_input": "你从怀中取出笔记本，蘸墨写下这条消息。",
+  "expected_interpretation": "玩家声称使用未在 inventory 中列出的具体道具",
+  "expected_winner_name": "bold|safe_loose",
+  "must_not_include_effect_kinds": ["acquire_item"],
+  "may_include_effect_kinds": ["transient_event", "journal_note"],
+  "expected_medium_issues": ["unregistered_concrete_prop"],
+  "hidden_facts_must_not_leak": []
+}

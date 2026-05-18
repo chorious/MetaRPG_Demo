@@ -1,4 +1,4 @@
-"""Agentic v0.6.3 — full 5-turn Greyfen beer loop smoke test.
+"""Agentic v0.6.4 — 7-turn Greyfen dual-Writer smoke test.
 
 Routes through metarpg.agentic.runner for canonical turn orchestration.
 Runs end-to-end with real LLMs, preserving all output logs.
@@ -9,6 +9,8 @@ Turns:
 3. 一饮而尽
 4. "这附近发生了什么事情么？我是新来的，嘿嘿"
 5. 静静地记下了这条信息
+6. 我抽出光剑斩向 Mara                  (absence — v0.6.4 任性回归)
+7. 我读取 Mara 的心思                    (reframing — v0.6.4 任性回归)
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, r"E:\GameDesign\MetaRPG_Dev")
 
 from metarpg.agentic.run_logger import RunLogger
-from metarpg.agentic.runner import run_agentic_turn
+from metarpg.agentic.runner import aggregate_v064_stats, run_agentic_turn
 from metarpg.agentic.scorecard import TurnScorecard
 from metarpg.scenarios.greyfen import build
 
@@ -41,9 +43,28 @@ def _print_turn_result(turn_idx: int, result: dict, player_input: str) -> None:
     print(f"    Visible: {sp.get('scene', {}).get('visible_entities', [])}")
     print(f"    Inventory: {sp.get('player_context', {}).get('inventory_or_handheld', [])}")
 
+    feas = draft.feasibility
+    if feas:
+        print(f"\n[1.5] Feasibility")
+        print(f"    world_response_kind: {feas.world_response_kind}")
+        print(f"    facts: {feas.feasibility_facts[:3]}{'...' if len(feas.feasibility_facts) > 3 else ''}")
+        print(f"    preserve_voice: {feas.preserve_player_voice}")
+
+    print(f"\n[1.6] Writer candidates (v0.6.4):")
+    for name in ("bold", "safe_loose", "safe_strict"):
+        cand = draft.writer_candidates.get(name)
+        audit = draft.candidate_audits.get(name, {})
+        if cand is None:
+            print(f"    {name:<12} — MISSING (writer exception)")
+        else:
+            passed = audit.get("passed")
+            issue_count = len(audit.get("issues", []))
+            print(f"    {name:<12} {'PASS' if passed else 'FAIL'} ({issue_count} hard issues, {len(cand.segments)} segs)")
+    print(f"    => winner: {draft.winner_name}")
+
     writer = draft.writer_output
     if writer:
-        print(f"\n[2] Writer responded")
+        print(f"\n[2] Winner output ({draft.winner_name})")
         print(f"    Interpretation: {writer.interpretation}")
         print(f"    Segments ({len(writer.segments)}):")
         for s in writer.segments:
@@ -55,7 +76,7 @@ def _print_turn_result(turn_idx: int, result: dict, player_input: str) -> None:
         if writer.risk_notes:
             print(f"    Risk notes: {writer.risk_notes}")
     else:
-        print("\n[2] Writer FAILED")
+        print("\n[2] No winner output (all writers + fallback failed)")
 
     claims = draft.translated_claims
     if claims:
@@ -96,6 +117,7 @@ def _print_turn_result(turn_idx: int, result: dict, player_input: str) -> None:
     print(f"    Action understanding: {sc.action_understanding_score}")
     print(f"    Hard issues: {sc.hard_issue_count} | Medium: {sc.medium_issue_count} | Soft: {sc.soft_issue_count}")
     print(f"    Player experience: {sc.player_experience_score}")
+    print(f"    Wall time: {draft.turn_wall_time_s:.2f}s")
     print(f"    Acceptable: {sc.is_acceptable()}")
     if sc.notes:
         for note in sc.notes:
@@ -126,13 +148,16 @@ def main() -> int:
         (3, "一饮而尽"),
         (4, "\"这附近发生了什么事情么？我是新来的，嘿嘿\""),
         (5, "静静地记下了这条信息"),
+        (6, "我抽出光剑斩向 Mara"),
+        (7, "我读取 Mara 的心思"),
     ]
 
     print("=" * 70)
-    print(f"Agentic 5-Turn Smoke Test  RunID: {run_id}")
+    print(f"Agentic 7-Turn Smoke Test (v0.6.4 dual-Writer)  RunID: {run_id}")
     print("=" * 70)
 
     overall_scores: list[TurnScorecard] = []
+    drafts = []
 
     for turn_idx, player_input in turns:
         result = run_agentic_turn(
@@ -146,6 +171,7 @@ def main() -> int:
 
         _print_turn_result(turn_idx, result, player_input)
         overall_scores.append(result["scorecard"])
+        drafts.append(result["draft"])
         history.append(player_input)
 
     # Final summary
@@ -157,6 +183,16 @@ def main() -> int:
     for sc in overall_scores:
         status = "PASS" if sc.is_acceptable() else "FAIL"
         print(f"  {sc.turn_id}: {status} | grounding={sc.grounding_score} | alignment={sc.patch_alignment_score}")
+
+    v064_stats = aggregate_v064_stats(drafts)
+    print("\nv0.6.4 stats:")
+    print(f"  Bold pass rate:        {v064_stats.get('bold_pass_rate', 0):.2%}")
+    print(f"  Safe_loose pass rate:  {v064_stats.get('safe_loose_pass_rate', 0):.2%}")
+    print(f"  Safe_strict pass rate: {v064_stats.get('safe_strict_pass_rate', 0):.2%}")
+    print(f"  Fallback count:        {v064_stats.get('fallback_count', 0)}")
+    print(f"  Median wall time:      {v064_stats.get('median_turn_wall_time_s', 0):.2f}s")
+    print(f"  Winner distribution:   {v064_stats.get('winner_distribution', {})}")
+
     print(f"\nLogs saved to: {run_dir}")
     print("=" * 70)
 
@@ -174,7 +210,8 @@ def main() -> int:
         hard_failures=hard_failures,
         medium_issues=medium_issues,
         soft_issues=soft_issues,
-        case_id="greyfen_beer_loop",
+        case_id="greyfen_beer_loop_v064",
+        v064_stats=v064_stats,
     )
 
     return 0 if all_pass else 1

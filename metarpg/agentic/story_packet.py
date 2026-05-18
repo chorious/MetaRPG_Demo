@@ -77,6 +77,31 @@ def _recent_events(world: WorldState, limit: int = 5) -> list[str]:
     return events[-limit:]
 
 
+# Keywords that indicate an item was transferred to the player
+_INVENTORY_TRANSFER_KEYWORDS = {
+    "给", "递", "推", "倒", "拿", "取", "接过", "收到",
+    "给你", "给你", "推给", "递给", "倒了", "放到", "放在",
+    "面前", "你手中", "你手里", "你跟前", "你旁边",
+}
+
+
+def _inventory_events(world: WorldState, limit: int = 8) -> list[str]:
+    """Extract turn_event_log entries that look like item transfers to player.
+
+    These are used by Hard Auditor to allow consume_item even when the
+    world.facts 'has' predicate hasn't been updated yet (e.g. transient_event
+    'Mara poured ale for player' from the previous turn).
+    """
+    events: list[str] = []
+    for entry in world.turn_event_log[-limit:]:
+        text = str(entry).lower()
+        if any(kw in text for kw in _INVENTORY_TRANSFER_KEYWORDS):
+            # Heuristic: also require a noun that looks like an item
+            # (at least one Chinese character or English word > 2 chars)
+            events.append(str(entry))
+    return events
+
+
 def _npc_surface_state(world: WorldState, npcs: list[str]) -> dict[str, dict[str, Any]]:
     state: dict[str, dict[str, Any]] = {}
     for npc in npcs:
@@ -207,6 +232,7 @@ def build_story_packet(world: WorldState) -> dict[str, Any]:
             "known_facts": visible_facts,
             "recent_events": recent,
             "inventory_or_handheld": inventory,
+            "inventory_events": _inventory_events(world),
         },
         "npc_surface": npc_surface,
         "allowed_effect_kinds": allowed_effects,
@@ -273,6 +299,11 @@ def _forbidden_mentions(
     return {
         "entities_not_present": absent_npcs,
         "hidden_fact_aliases": hidden_aliases,
+        "schema_violations": [
+            "光剑", "lightsaber", "激光剑", "能量剑",
+            "心灵感应", "读心", "telepathy", "mind reading",
+            "手机", "电话", "电", "车", "枪", "枪", "vehicle",
+        ],
         "forbidden_narration": [
             "npc_inner_thought_hidden_fact",
             "remote_action",

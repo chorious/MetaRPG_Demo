@@ -109,6 +109,7 @@ def apply_admitted_patch(
             if note:
                 delta["journal_notes"].append(note)
                 world.journal_notes.append(note)
+                world.turn_event_log.append(f"journal:{note}")
 
         elif kind == "transient_event":
             name = args.get("name", "")
@@ -122,7 +123,9 @@ def apply_admitted_patch(
             target = args.get("target", "")
             reaction = args.get("reaction", "")
             if target:
-                delta["events"].append(f"observe:{target}:{reaction}")
+                event_str = f"observe:{target}:{reaction}"
+                delta["events"].append(event_str)
+                world.turn_event_log.append(event_str)
 
         elif kind == "create_hook":
             hid = args.get("hook_id", "")
