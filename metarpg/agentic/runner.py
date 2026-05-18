@@ -197,6 +197,7 @@ def run_agentic_turn(
 
         winner_name, winner_output, winner_audit = _select_winner(
             draft.writer_candidates, draft.candidate_audits, feasibility,
+            player_input=player_input, client=flash_client,
         )
         if winner_name == "fallback":
             soft_audit = {"passed": True, "issues": []}
@@ -306,6 +307,8 @@ def _select_winner(
     candidates: dict[str, WriterOutput],
     audits: dict[str, dict[str, Any]],
     feasibility: FeasibilityReport,
+    player_input: str = "",
+    client=None,
 ) -> tuple[str, WriterOutput, dict[str, Any]]:
     """Decision tree: bold > safe_loose > safe_strict > refusal_fallback.
 
@@ -320,7 +323,11 @@ def _select_winner(
         if audit.get("passed"):
             return name, cand, audit
 
-    fallback_output = refusal_fallback.generate(feasibility)
+    fallback_output = refusal_fallback.generate(
+        feasibility,
+        recent_player_input=player_input,
+        client=client,
+    )
     fallback_audit = {
         "passed": True,
         "issues": [],

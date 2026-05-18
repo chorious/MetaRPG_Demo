@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from metarpg.agentic.crystallize import crystallize
+from metarpg.agentic.crystallize import _parse_json, crystallize
 from metarpg.agentic.schemas import Segment
 from metarpg.models import Fact, WorldState
 
@@ -50,12 +50,45 @@ def test_crystallize_no_duplicate_facts() -> None:
 
 def test_crystallize_physical_type_filter() -> None:
     """Only physical fact types should be returned."""
-    # This test documents the contract; with LLM mock it would verify filtering.
     from metarpg.agentic.crystallize import _PHYSICAL_TYPES
     assert "location" in _PHYSICAL_TYPES
     assert "entity_appearance" in _PHYSICAL_TYPES
     assert "prop" in _PHYSICAL_TYPES
     assert "event" in _PHYSICAL_TYPES
+
+
+# ---------------------------------------------------------------------------
+# Bug 1: has-fact arg order normalization
+# ---------------------------------------------------------------------------
+
+class _FakeClient:
+    def __init__(self, text: str) -> None:
+        self._text = text
+    def chat(self, messages, temperature: float = 0.7) -> str:
+        return self._text
+
+
+def test_crystallize_normalizes_has_args_order() -> None:
+    """LLM returns has(coin,player) -> normalized to has(player,coin)."""
+    w = WorldState()
+    raw = '[{"predicate":"has","args":["coin","player"],"fact_type":"prop"}]'
+    segs = [Segment(id="s1", type="sensory", text="player has coin")]
+    audit = {"passed": True, "issues": []}
+    facts = crystallize(segs, audit, w, client=_FakeClient(raw))
+    assert len(facts) == 1
+    assert facts[0].predicate == "has"
+    assert facts[0].args == ("player", "coin")
+
+
+def test_crystallize_keeps_correct_has_order() -> None:
+    """LLM already returns has(player,coin) -> keep as-is."""
+    w = WorldState()
+    raw = '[{"predicate":"has","args":["player","coin"],"fact_type":"prop"}]'
+    segs = [Segment(id="s1", type="sensory", text="player has coin")]
+    audit = {"passed": True, "issues": []}
+    facts = crystallize(segs, audit, w, client=_FakeClient(raw))
+    assert len(facts) == 1
+    assert facts[0].args == ("player", "coin")
 
 
 if __name__ == "__main__":

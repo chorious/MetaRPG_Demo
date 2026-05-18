@@ -106,6 +106,9 @@ List new physical world facts only. Return JSON array.
         pred = item.get("predicate", "")
         args = item.get("args", [])
         if pred and args:
+            # v0.6.6.1 Bug 1: normalize has-fact arg order to (player, item)
+            if pred == "has" and len(args) == 2 and args[1] == "player":
+                args = [args[1], args[0]]
             f = Fact(pred, tuple(str(a) for a in args), ft)
             # Skip duplicates
             if f not in world.facts:

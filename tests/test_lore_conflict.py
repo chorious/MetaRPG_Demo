@@ -1,4 +1,4 @@
-"""Tests for lore_conflict primitive (v0.6.6).
+"""Tests for lore_conflict primitive (v0.6.6.1).
 """
 from __future__ import annotations
 
@@ -43,6 +43,33 @@ def test_detect_conflict_different_predicate() -> None:
     new = Fact("color", ("well", "grey"))
     conflicts = detect_conflict(new, w)
     assert conflicts == []
+
+
+def test_at_predicate_nesting_not_conflict() -> None:
+    """at(X,Y) is nesting, not mutex — a cup can be in a tavern."""
+    w = WorldState()
+    w.facts.add(Fact("at", ("ale", "tavern")))
+    new = Fact("at", ("ale", "rough_pottery_cup"))
+    conflicts = detect_conflict(new, w)
+    assert conflicts == []
+
+
+def test_said_predicate_not_conflicting() -> None:
+    """said(X,*) is multiple utterances, not mutex."""
+    w = WorldState()
+    w.facts.add(Fact("said", ("mara", "the_mine_is_sealed")))
+    new = Fact("said", ("mara", "guards_patrol_more_frequently"))
+    conflicts = detect_conflict(new, w)
+    assert conflicts == []
+
+
+def test_genuine_mutex_dug_by() -> None:
+    """dug_by(well, A) vs dug_by(well, B) is genuine mutex."""
+    w = WorldState()
+    w.facts.add(Fact("dug_by", ("well", "mara_grandfather")))
+    new = Fact("dug_by", ("well", "community"))
+    conflicts = detect_conflict(new, w)
+    assert len(conflicts) == 1
 
 
 def test_record_conflict_stores_pair() -> None:

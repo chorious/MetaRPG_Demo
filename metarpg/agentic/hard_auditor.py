@@ -31,6 +31,21 @@ from metarpg.agentic.schemas import (
 from metarpg.models import Fact, WorldState
 
 
+# Keywords that indicate pleasantry / social texture (exempt from patch_support)
+_PLEASANTRY_KEYWORDS: set[str] = {
+    "感谢", "谢谢", "路上小心", "再会", "再见", "欢迎", "早安", "晚安",
+    "你好", "慢走", "保重", "客气", "不客气", "恭喜", "祝",
+    "thanks", "thank", "goodbye", "farewell", "welcome", "good morning",
+    "good night", "hello", "take care", "congratulations",
+}
+
+
+def _is_pleasantry(text: str) -> bool:
+    """Check if NPC speech is social texture rather than information transfer."""
+    lowered = text.lower()
+    return any(kw in lowered for kw in _PLEASANTRY_KEYWORDS)
+
+
 # Valid effect kinds (closed set)
 _VALID_EFFECT_KINDS = {
     "transient_event",
@@ -77,8 +92,10 @@ def run_hard_audit(
     # 5. Patch effect validity
     hard_issues.extend(_check_patch_validity(candidate_patch, story_packet, pre_world))
 
-    # 6. Narrative claim vs patch alignment
-    hi, mi = _check_alignment(segments, translated_claims, candidate_patch, story_packet)
+    # 6. Narrative claim vs patch alignment (skip inner_monologue segments)
+    im_seg_ids = {s.id for s in segments if s.type == "inner_monologue"}
+    non_im_claims = [c for c in translated_claims if c.segment_id not in im_seg_ids]
+    hi, mi = _check_alignment(segments, non_im_claims, candidate_patch, story_packet)
     hard_issues.extend(hi)
     medium_issues.extend(mi)
 
@@ -313,13 +330,14 @@ def _check_patch_validity(
         if eff.kind == "move":
             dest = eff.args.get("destination", "")
             if dest and dest not in pre_world.locations:
+                # v0.6.6.1: new locations auto-register on commit; downgrade to medium
                 issues.append(
                     AuditIssue(
-                        severity="hard_fail",
-                        type="state_change_without_support",
+                        severity="medium_issue",
+                        type="unregistered_location",
                         evidence=dest,
-                        reason=f"Destination '{dest}' is not a known location.",
-                        repair_instruction="Use a known location from the world schema.",
+                        reason=f"Destination '{dest}' is not yet a known location; will auto-register on commit.",
+                        repair_instruction="Ensure narrative introduces this location plausibly.",
                     )
                 )
 
@@ -340,6 +358,10 @@ def _check_alignment(
     # NPC speech claims require patch support (offer is handled separately)
     speech_claims = [c for c in claims if c.kind == "npc_speech"]
     for claim in speech_claims:
+        # v0.6.6.1: pleasantry exemption
+        if _is_pleasantry(claim.evidence_span):
+            continue
+
         has_support = any(
             pk in patch_kinds
             for pk in ("knowledge_transfer", "reveal", "create_hook")

@@ -62,6 +62,8 @@ def apply_admitted_patch(
                 f = Fact("at", (entity, dest))
                 world.facts.add(f)
                 delta["facts_added"].append(str(f))
+                # Auto-register new location
+                world.locations.add(dest)
 
         elif kind == "consume_item":
             item = args.get("item", "")

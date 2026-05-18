@@ -88,6 +88,12 @@ LOCAL INVENTION RULE
 - Tavern ambience may include generic smell, noise, warmth, cups, benches, and unnamed patrons.
 - Named items, money, weapons, notes, keys, food in the player's pack, or NPC gifts must be represented in candidate_patch.
 
+MOVE RULE
+When the player moves to a new location, emit a move patch with the destination name from your narrative. The world will auto-register the location. Keep the transition prose grounded in what the player can observe (light, sound, distance, effort).
+
+INNER MONOLOGUE RULE
+In scene transitions, after strong events, or when the player is clearly lost in thought, you may insert ONE short inner_monologue segment. It must be the player's own interior voice — never an NPC's. It produces no patch effects and creates no hard facts. Use it for texture, not exposition.
+
 STOP CONDITION
 Before finishing, mentally verify:
 1. JSON starts with { and ends with }.

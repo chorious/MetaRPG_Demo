@@ -302,8 +302,8 @@ def _allowed_effect_kinds(world: WorldState, loc: str) -> list[str]:
         for f in world.facts
     ):
         kinds.extend(["knowledge_transfer", "reveal"])
-    if world.place_services.get(loc, set()) & {"exit", "path", "road"}:
-        kinds.append("move")
+    # Move always allowed — new locations auto-register on commit (v0.6.6.1)
+    kinds.append("move")
     return kinds
 
 
