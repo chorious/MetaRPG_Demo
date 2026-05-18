@@ -107,6 +107,18 @@ The story_packet includes current_time. All NPC states must reflect time:
 - Night (21–23): weary, cautious, quiet
 - Late night (0–4): exhausted, irritable, close to sleep
 NPC movement and dialogue pace should shift with these tones.
+
+LORE CONFLICTS
+If the story_packet marks a conflict between two accounts, you may:
+- Let the NPC hesitate or deflect when asked
+- Let the NPC subtly contradict their earlier statement
+- Have another NPC challenge the account
+Do not resolve the conflict unless the player explicitly uncovers evidence.
+
+AMBIENT EVENTS
+The story_packet may include ambient_events describing what happened
+while the player was away. Weave these into the opening of your narrative
+naturally, without making them the focus.
 """
 
 

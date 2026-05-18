@@ -16,10 +16,15 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Fact:
-    """A ground predicate, e.g. at(player, tavern). Hashable, set-friendly."""
+    """A ground predicate, e.g. at(player, tavern). Hashable, set-friendly.
+
+    v0.6.6: optional fact_type tag for crystallize classification:
+      location | entity_appearance | prop | event | ""
+    """
 
     predicate: str
     args: tuple[str, ...]
+    fact_type: str = ""  # v0.6.6
 
     def __str__(self) -> str:
         return f"{self.predicate}({','.join(self.args)})"
@@ -282,6 +287,9 @@ class WorldState:
 
     # v0.6.6 entity lifecycle (Primitive B)
     entity_states: dict[str, "EntityState"] = field(default_factory=dict)
+
+    # v0.6.6 double-layer knowledge (Primitive C)
+    revealed_facts: set[str] = field(default_factory=set)  # hidden facts now visible to player
 
     def get_relation(self, a: str, b: str) -> Relation | None:
         return self.relations.get((a, b))

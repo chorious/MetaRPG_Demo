@@ -13,8 +13,15 @@ from __future__ import annotations
 from typing import Any
 
 from metarpg.agentic.entity_lifecycle import ensure_entity, surface_for_npc
+from metarpg.agentic.lore_conflict import get_conflict_surface
+from metarpg.agentic.offscreen_tick import ambient_events_for_scene
 from metarpg.agentic.time_flow import current_time_str
 from metarpg.models import Fact, WorldState
+
+
+# ---------------------------------------------------------------------------
+# Fact types visible to Writer (not hidden system facts)
+_VISIBLE_FACT_TYPES = {"location", "entity_appearance", "prop", "event", ""}
 
 
 # ---------------------------------------------------------------------------
@@ -229,12 +236,15 @@ def build_story_packet(world: WorldState) -> dict[str, Any]:
     allowed_reveals = _allowed_reveals(world)
     forbidden = _forbidden_mentions(world, nearby, hidden)
 
+    current_turn = world.world_time.get("turn", 0)
+
     return {
         "scene": {
             "location": loc,
             "visible_entities": ["player"] + nearby,
             "visible_objects": objects,
             "atmosphere": atmosphere,
+            "ambient_events": ambient_events_for_scene(world, current_turn),
         },
         "player_context": {
             "known_facts": visible_facts,
@@ -247,6 +257,12 @@ def build_story_packet(world: WorldState) -> dict[str, Any]:
         "allowed_effect_kinds": allowed_effects,
         "allowed_reveals": allowed_reveals,
         "forbidden": forbidden,
+        "facts": [str(f) for f in world.facts if f.fact_type in _VISIBLE_FACT_TYPES],
+        "lore_conflicts": get_conflict_surface(world),
+        "beliefs": [
+            {"id": b.id, "description": b.description, "prob": round(b.prob, 2)}
+            for b in world.beliefs.values()
+        ],
         "auditor_only": {
             "hidden_truths": hidden,
             "active_hooks": _active_hooks(world),

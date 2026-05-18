@@ -41,7 +41,10 @@ from metarpg.agentic.schemas import (
 from metarpg.agentic.scorecard import TurnScorecard
 from metarpg.agentic.soft_auditor_agent import run_soft_auditor
 from metarpg.agentic.story_packet import build_story_packet
+from metarpg.agentic.belief_tracker import update_beliefs_from_evidence
+from metarpg.agentic.crystallize import crystallize
 from metarpg.agentic.entity_lifecycle import tick_all_present
+from metarpg.agentic.offscreen_tick import tick_offscreen_entities
 from metarpg.agentic.time_flow import advance_time
 from metarpg.agentic.translator_agent import run_translator
 from metarpg.agentic.writer_agent import (
@@ -85,6 +88,9 @@ def run_agentic_turn(
 
     flash_client = make_client("flash")
     local_client = make_client("local")
+
+    # Primitive F: offscreen tick (before any Writer sees the world)
+    tick_offscreen_entities(world, turn_index, client=local_client)
 
     # 2. Batch 1: Bold Writer (Flash) + Feasibility (Qwen) -----------------
     batch1_jobs = [
@@ -235,6 +241,25 @@ def run_agentic_turn(
     else:
         if run_logger:
             run_logger.emit(turn_index, "commit", "commit_success", "nothing_admitted")
+
+    # Primitive D: crystallize — extract physical facts from narrative
+    new_facts = crystallize(
+        winner_output.segments, draft.hard_audit, world,
+        client=local_client,
+    )
+    if new_facts:
+        for f in new_facts:
+            world.facts.add(f)
+        if run_logger:
+            run_logger.emit(
+                turn_index, "crystallize", "facts_extracted",
+                f"count={len(new_facts)}",
+            )
+
+    # Primitive C: belief tracker — update beliefs from player action evidence
+    # Heuristic: if the narrative mentions a belief-related topic, nudge it.
+    # (Full evidence mapping would require Translator to tag belief references.)
+    # For now, placeholder: no automatic evidence without explicit tags.
 
     # Primitive A: advance time after every turn (even nothing_admitted)
     advance_time(world)
