@@ -93,7 +93,39 @@ def _build_system_prompt(frame: NarrativeFrame) -> str:
         "transfer_item, update_relation, update_belief, mark_hook_status, "
         "add_event, add_texture, inner_monologue.\n"
         f"6. Allowed commitment levels for this turn: {frame.allowed_commitment_levels}\n"
-        f"7. Forbidden moves: {frame.forbidden_moves}\n"
+        f"7. Forbidden moves: {frame.forbidden_moves}\n\n"
+        "REQUIRED JSON SCHEMA:\n"
+        '{\n'
+        '  "player_input": "<original player text>",\n'
+        '  "operations": [\n'
+        '    {\n'
+        '      "kind": "inspect",\n'
+        '      "params": {"target": "black_ash", "description": "..."}\n'
+        '    },\n'
+        '    {\n'
+        '      "kind": "speak",\n'
+        '      "params": {"entity": "alen", "text": "..."}\n'
+        '    },\n'
+        '    {\n'
+        '      "kind": "add_event",\n'
+        '      "params": {"summary": "Player inspects ash"}\n'
+        '    },\n'
+        '    {\n'
+        '      "kind": "mark_hook_status",\n'
+        '      "params": {"hook_id": "hook_xxx", "status": "progressed"}\n'
+        '    }\n'
+        '  ],\n'
+        '  "commitments": [\n'
+        '    {"level": "event", "description": "Player inspects ash", "operation_index": 2},\n'
+        '    {"level": "utterance", "description": "Alen says...", "operation_index": 1},\n'
+        '    {"level": "hint", "description": "The ash smells odd", "operation_index": 0}\n'
+        '  ],\n'
+        '  "assumptions": []\n'
+        '}\n\n'
+        "IMPORTANT:\n"
+        "- Each operation MUST have \"kind\" and nested \"params\".\n"
+        "- \"commitments\" is a separate array describing narrative claims.\n"
+        "- Use operation_index to link a commitment to its operation.\n"
     )
 
 
@@ -124,24 +156,83 @@ def _build_user_prompt(
 
 
 def _parse_transaction(raw: dict[str, Any]) -> TurnTransaction:
-    ops = [
-        Operation(kind=o["kind"], params=o.get("params", {}))
-        for o in raw.get("operations", [])
-    ]
-    commitments = [
-        Commitment(
-            level=c["level"],
-            description=c["description"],
-            operation_index=c.get("operation_index", -1),
-            metadata=c.get("metadata", {}),
-        )
-        for c in raw.get("commitments", [])
-    ]
+    """Parse Director JSON into TurnTransaction with schema tolerance.
+
+    Handles common LLM deviations:
+    - 'type' alias for 'kind'
+    - Flat params (fields mixed into operation object instead of nested 'params')
+    - 'commitment_level' inside operations instead of standalone 'commitments' array
+    """
+    raw_ops = raw.get("operations", [])
+    if not isinstance(raw_ops, list):
+        raise ValueError(f"'operations' must be a list, got {type(raw_ops).__name__}")
+
+    ops: list[Operation] = []
+    extracted_commitments: list[Commitment] = []
+
+    for i, o in enumerate(raw_ops):
+        if not isinstance(o, dict):
+            continue
+        kind = o.get("kind") or o.get("type", "")
+        if not kind:
+            continue
+
+        # Collect params: prefer explicit 'params', else gather flat fields
+        params = dict(o.get("params", {})) if "params" in o else {}
+        if not params:
+            reserved = {"kind", "type", "metadata", "commitment_level", "level", "description", "operation_index"}
+            params = {k: v for k, v in o.items() if k not in reserved}
+
+        ops.append(Operation(kind=kind, params=params))
+
+        # Extract inline commitment_level
+        level = o.get("commitment_level")
+        if level:
+            desc = params.get("description") or params.get("text") or params.get("content") or f"{kind} operation"
+            extracted_commitments.append(
+                Commitment(
+                    level=level,
+                    description=desc,
+                    operation_index=i,
+                    metadata={},
+                )
+            )
+
+    # Standalone commitments array takes precedence over inline ones
+    raw_commitments = raw.get("commitments", [])
+    if raw_commitments:
+        commitments = [
+            Commitment(
+                level=c["level"],
+                description=c.get("description", ""),
+                operation_index=c.get("operation_index", -1),
+                metadata=c.get("metadata", {}),
+            )
+            for c in raw_commitments
+            if isinstance(c, dict) and c.get("level")
+        ]
+    else:
+        commitments = extracted_commitments
+
+    # Normalize assumptions: strings -> dicts; skip non-dict items
+    raw_assumptions = raw.get("assumptions", [])
+    assumptions: list[dict[str, Any]] = []
+    for a in raw_assumptions:
+        if isinstance(a, dict):
+            assumptions.append(a)
+        elif isinstance(a, str):
+            assumptions.append({"note": a})
+
+    # Normalize move_player params: target_location -> destination
+    for op in ops:
+        if op.kind == "move_player" and "target_location" in op.params and "destination" not in op.params:
+            op.params["destination"] = op.params.pop("target_location")
+
     return TurnTransaction(
         player_input=raw.get("player_input", ""),
         operations=ops,
         commitments=commitments,
-        assumptions=raw.get("assumptions", []),
+        assumptions=assumptions,
     )
 
 

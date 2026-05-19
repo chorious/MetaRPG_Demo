@@ -612,7 +612,7 @@ def run_agentic_turn_v070(
 
     # 2. Feasibility -> player intent -----------------------------------------
     feas_result = run_feasibility(story_packet, player_input, client=local_client)
-    player_intent = _feasibility_to_intent(feas_result)
+    player_intent = _feasibility_to_intent(feas_result, player_input)
     if run_logger:
         run_logger.emit(turn_index, "feasibility", "intent_derived", str(player_intent))
 
@@ -699,12 +699,13 @@ def run_agentic_turn_v070(
     }
 
 
-def _feasibility_to_intent(feas: FeasibilityReport) -> dict[str, Any]:
+def _feasibility_to_intent(feas: FeasibilityReport, player_input: str = "") -> dict[str, Any]:
     """Map FeasibilityReport fields to the player_intent dict HookManager expects."""
     action = feas.stated_action or "ambiguous"
-    # Normalize to a small verb set
     action_type = "ambiguous"
-    for verb, atype in {
+
+    # English verb map
+    _VERB_MAP: dict[str, str] = {
         "inspect": "inspect", "check": "inspect", "examine": "inspect",
         "ask": "ask", "question": "ask", "talk": "ask",
         "help": "help", "aid": "help",
@@ -713,10 +714,30 @@ def _feasibility_to_intent(feas: FeasibilityReport) -> dict[str, Any]:
         "give": "give", "hand": "give",
         "wait": "wait", "rest": "wait",
         "attack": "attack", "fight": "attack", "hit": "attack",
-    }.items():
+    }
+
+    for verb, atype in _VERB_MAP.items():
         if verb in action.lower():
             action_type = atype
             break
+
+    # Fallback: Chinese keyword map from raw player_input
+    if action_type == "ambiguous" and player_input:
+        _CN_VERBS: dict[str, str] = {
+            "检查": "inspect", "查看": "inspect", "观察": "inspect", "检视": "inspect",
+            "问": "ask", "询问": "ask", "打听": "ask", "谈": "ask",
+            "帮助": "help", "帮": "help", "协助": "help", "救": "help",
+            "走": "move", "去": "move", "移动": "move", "接近": "move", "靠近": "move",
+            "拿": "take", "取": "take", "捡起": "take", "抓": "take",
+            "给": "give", "递": "give", "交": "give",
+            "等待": "wait", "等": "wait", "休息": "wait",
+            "攻击": "attack", "打": "attack", "杀": "attack", "砍": "attack",
+        }
+        for cn, atype in _CN_VERBS.items():
+            if cn in player_input:
+                action_type = atype
+                action = cn
+                break
 
     return {
         "action_type": action_type,

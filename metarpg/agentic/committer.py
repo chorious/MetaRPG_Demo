@@ -221,6 +221,8 @@ def _apply_operation(
     if kind == "move_player":
         dest = params.get("destination")
         entity = params.get("entity", "player")
+        if not dest:
+            return
         old = [f for f in world.facts if f.predicate == "at" and f.args[0] == entity]
         for o in old:
             world.facts.discard(o)
@@ -242,6 +244,8 @@ def _apply_operation(
 
     elif kind == "transfer_item":
         item = params.get("item")
+        if not item:
+            return
         from_entity = params.get("from_entity")
         to_entity = params.get("to_entity")
         if from_entity:
