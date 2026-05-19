@@ -159,3 +159,16 @@ class TurnDraft:
     def from_json(cls, data: dict[str, Any]) -> TurnDraft:
         # Basic reconstruction; caller may need deep conversion for nested objects
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+# v0.7.0 transaction types (re-exported for backward-compatible imports)
+from metarpg.agentic.transaction import (  # noqa: E402
+    Commitment,
+    DowngradeRecord,
+    NarrativeFrame,
+    Operation,
+    RenderBrief,
+    TurnTransaction,
+    ValidationIssue,
+    ValidationResult,
+)
