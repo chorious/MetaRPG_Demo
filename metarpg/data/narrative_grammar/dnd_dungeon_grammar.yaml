@@ -1,0 +1,100 @@
+version: 0.7.0
+name: dungeon_narrative_grammar
+
+commitment_levels:
+  texture:
+    meaning: 氛围或表层描写,默认不进 canon,不能被后续逻辑强依赖。
+  hint:
+    meaning: 可感知信号,指向 hook,但不确认 hidden truth。
+  affordance:
+    meaning: 玩家可交互机会,进入 active affordances。
+  event:
+    meaning: 已发生事件,写入 event log。
+  canon:
+    meaning: 确定事实,写入 canon facts。
+  utterance:
+    meaning: 某角色说过的话,记录为来源化说法,不等于世界真相。
+  belief_evidence:
+    meaning: 改变 belief 概率的证据,不直接 reveal。
+
+hook_types:
+  lack:
+    definition: 某人缺少安全、信息、物品、信任或出口。
+    common_affordances: [ask, offer_help, trade, ignore]
+    allowed_commitments: [hint, affordance, event, belief_evidence]
+  enigma:
+    definition: 有异常信号,原因未知。
+    common_affordances: [inspect, compare, ask, follow]
+    allowed_commitments: [texture, hint, affordance, belief_evidence]
+  threshold:
+    definition: 玩家面对进入新地点、新危险或新知识层的门槛。
+    common_affordances: [enter, inspect, unlock, retreat]
+    allowed_commitments: [hint, affordance, event, canon]
+  debt:
+    definition: 人情、帮助、承诺或交换造成的社会张力。
+    common_affordances: [call_in_favor, repay, refuse, deepen_trust]
+    allowed_commitments: [event, utterance, relation_delta, belief_evidence]
+  contradiction:
+    definition: 两个来源的说法或证据不一致。
+    common_affordances: [confront, verify, compare_sources]
+    allowed_commitments: [utterance, hint, affordance, belief_evidence]
+  threat_timer:
+    definition: 时间拖延会带来更坏状态。
+    common_affordances: [hurry, wait, prepare, investigate]
+    allowed_commitments: [hint, event, affordance, canon]
+
+hint_types:
+  gesture_hint:
+    commitment_level: hint
+    examples: [停顿, 避开目光, 指节收紧, 呼吸变慢]
+  object_hint:
+    commitment_level: hint
+    examples: [划痕, 黑灰, 水线, 蜡封, 缺口]
+  speech_hint:
+    commitment_level: utterance
+    examples: [改口, 含糊, 过快否认, 转移话题]
+  absence_hint:
+    commitment_level: hint
+    examples: [本该在的东西不在, 常亮的灯熄灭]
+  spatial_hint:
+    commitment_level: hint
+    examples: [冷风, 脚印, 门缝, 回声方向]
+  time_hint:
+    commitment_level: hint
+    examples: [水位升高, 火把变短, 回声更近]
+
+beat_types:
+  arrival:
+    function: 建立当前空间和可交互对象。
+    default_hooks: [threshold, enigma]
+  inspection:
+    function: 将 hint 推向 affordance 或 belief_evidence。
+    default_hooks: [enigma]
+  social_pressure:
+    function: 通过 NPC 反应制造信任、债务、隐瞒。
+    default_hooks: [lack, debt, contradiction]
+  threshold_crossing:
+    function: 场景转移或进入新危险层。
+    default_hooks: [threshold, threat_timer]
+  aftermath:
+    function: 处理行动余波,适合 inner_monologue 和 motif 变奏。
+    default_hooks: [debt, enigma]
+  complication:
+    function: 已有目标变难,但不直接否定玩家行动。
+    default_hooks: [threat_timer, contradiction]
+
+motif_rules:
+  max_motifs_per_turn: 2
+  repeat_requires_variation: true
+  motif_can_hint_hook: true
+  motif_cannot_reveal_hidden_truth_directly: true
+  renderer_should_use_motif_concretely: true
+
+render_rules:
+  prose_language: zh
+  renderer_model: deepseek_flash
+  max_segments: 3
+  no_system_terms: true
+  no_uncommitted_world_change: true
+  player_inner_monologue_allowed: true
+  npc_inner_monologue_forbidden: true

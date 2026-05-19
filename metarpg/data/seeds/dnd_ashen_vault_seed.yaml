@@ -1,0 +1,163 @@
+world_id: dnd_ashen_vault
+title: The Ashen Vault
+genre: dnd_like_dungeon_crawl
+tone:
+  language: zh
+  style: restrained, sensory, tense, low-fantasy
+  forbidden_style:
+    - modern technology
+    - sci-fi weapons
+    - comedy meta narration
+    - explicit system/debug vocabulary
+
+time:
+  turn: 0
+  dungeon_turn_minutes: 10
+  torch_remaining_turns: 12
+
+canon_facts:
+  - id: f_player_at_entrance
+    predicate: at
+    args: [player, entrance_hall]
+  - id: f_player_has_torch
+    predicate: has
+    args: [player, torch]
+  - id: f_player_has_short_sword
+    predicate: has
+    args: [player, short_sword]
+  - id: f_alen_at_entrance
+    predicate: at
+    args: [alen, entrance_hall]
+  - id: f_lower_door_sealed
+    predicate: sealed
+    args: [lower_vault_door]
+  - id: f_ash_on_threshold
+    predicate: visible_object
+    args: [black_ash, entrance_hall]
+
+locations:
+  entrance_hall:
+    name: 地城入口厅
+    tags: [threshold, cold_stone, torchlit]
+    exits: [old_guardroom, flooded_stair, sealed_lower_door]
+  old_guardroom:
+    name: 旧卫兵室
+    tags: [abandoned, searchable, rusted]
+    exits: [entrance_hall]
+  flooded_stair:
+    name: 积水阶梯
+    tags: [danger, water, echo]
+    exits: [entrance_hall, lower_landing]
+  sealed_lower_door:
+    name: 封闭下层门
+    tags: [threshold, locked, old_magic]
+    exits: [entrance_hall]
+
+entities:
+  player:
+    kind: player
+    visible_name: 你
+  alen:
+    kind: npc
+    visible_name: 艾伦
+    surface:
+      posture: 靠在入口厅的石柱旁,左臂用布条吊着
+      mood: alert, ashamed
+      voice: low, practical
+    public_goal: 想活着离开,但又不愿承认自己需要帮助
+
+items:
+  torch:
+    kind: tool
+    owner: player
+    tags: [light, consumable]
+  short_sword:
+    kind: weapon
+    owner: player
+    tags: [steel, close_range]
+  black_ash:
+    kind: clue
+    location: entrance_hall
+    tags: [residue, strange, inspectable]
+
+beliefs:
+  - id: b_alen_hides_key
+    subject: alen
+    proposition: alen has seen the lower door opened recently
+    probability: 0.45
+    visibility: director_only
+  - id: b_flood_is_rising
+    subject: dungeon
+    proposition: water level below the stair is slowly rising
+    probability: 0.55
+    visibility: director_only
+  - id: b_ash_marks_safe_path
+    subject: black_ash
+    proposition: the ash marks places where old warding failed
+    probability: 0.35
+    visibility: director_only
+
+hidden_truths:
+  - id: h_relic_moved_below
+    statement: The stolen reliquary was carried through the lower vault door before dawn.
+    aliases: [reliquary, stolen relic, before dawn, lower vault]
+    reveal_policy: only via allowed_reveal after sufficient evidence
+  - id: h_bell_sequence_opens_door
+    statement: The lower vault door responds to a three-note bell sequence.
+    aliases: [bell sequence, three-note chime, vault door song]
+    reveal_policy: hint first, never direct exposition in opening turns
+
+relations:
+  - from: player
+    to: alen
+    dims:
+      trust: 0.0
+      fear: 0.1
+      debt: 0.0
+
+motifs:
+  - id: m_black_ash
+    label: 黑灰
+    function: clue, contamination, failed protection
+    allowed_variations: [fingerprint, smear, powder, line, bitter smell]
+  - id: m_bell
+    label: 无声的铃
+    function: threshold, memory, mechanism
+    allowed_variations: [dull metal, absent chime, three marks, vibration]
+  - id: m_wet_stone
+    label: 潮湿石阶
+    function: time pressure, depth, danger
+    allowed_variations: [echo, cold water, moss, rising line]
+
+active_hooks:
+  - id: hook_alen_debt
+    hook_type: lack
+    subject: alen
+    object: safety
+    tension: 艾伦需要帮助,但他不愿完全信任玩家。
+    status: surfaced
+    visible_hints: [hint_alen_arm, hint_alen_avoids_lower_door]
+    affordances: [ask_alen, offer_help, leave_alen]
+  - id: hook_black_ash_enigma
+    hook_type: enigma
+    subject: black_ash
+    object: lower_vault
+    tension: 黑灰出现在入口门槛,但来源不明。
+    status: surfaced
+    visible_hints: [hint_ash_smell, hint_ash_line]
+    affordances: [inspect_ash, compare_ash, ask_alen_about_ash]
+  - id: hook_lower_door_threshold
+    hook_type: threshold
+    subject: lower_vault_door
+    object: lower_vault
+    tension: 下层门封闭,但它明显不是普通锁。
+    status: dormant
+    visible_hints: [hint_door_three_marks]
+    affordances: [inspect_door, force_door, search_guardroom]
+
+starting_affordances:
+  - ask_alen
+  - inspect_ash
+  - search_old_guardroom
+  - move_to_flooded_stair
+  - inspect_lower_door

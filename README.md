@@ -1,11 +1,15 @@
-# MetaRPG v0.5.2
+# MetaRPG v0.6.6.1
 
 A retrodictive reasonability engine. The player drives a small village mystery;
 hidden truths are tracked as probabilistic beliefs; high-confidence hypotheses
 get canonized only after passing a forbidden-pattern check.
 
-v0.5.2 makes the bridge authoritative: MetaRPG owns consequences, UPF owns
-presentation, save/load preserves the connection.
+Current line (v0.6.6.1): agentic LLM pipeline — StoryPacket → Writer →
+Translator → Scanner → Hard Auditor → Soft Auditor → Editor → Committer.
+See [CHANGELOG.md](CHANGELOG.md) and `PROJECT_STATUS.md`.
+
+Baseline v0.5.2 makes the bridge authoritative: MetaRPG owns consequences,
+UPF owns presentation, save/load preserves the connection.
 
 ## Quickstart
 
