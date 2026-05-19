@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from metarpg.agentic.schemas import CandidatePatchEffect, Segment
+from metarpg.agentic.schemas import CandidatePatchEffect, Commitment, Operation, Segment, TurnTransaction
 from metarpg.models import EntityState, Fact, Knowledge, WorldState
 
 
@@ -160,6 +160,160 @@ def commit_turn(
     # Also scan segment text for any named entity that slipped in
     _auto_init_new_entities(world, final_segments)
     return result
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0 — Transaction commit path (new interface, legacy commit_turn untouched)
+# ---------------------------------------------------------------------------
+
+
+def commit_transaction(world: WorldState, tx: "TurnTransaction") -> dict[str, Any]:
+    """Apply a validated TurnTransaction to WorldState.
+
+    Does NOT increment turn here; caller or legacy path handles it.
+    For standalone v0.7.0 pipeline, turn increment is done at end.
+    """
+    _ensure_v070_fields(world)
+
+    delta: dict[str, Any] = {
+        "facts_added": [],
+        "facts_removed": [],
+        "events": [],
+        "utterances": [],
+        "relations_changed": [],
+        "beliefs_changed": [],
+        "hooks_changed": [],
+        "affordances_added": [],
+    }
+
+    for op in tx.operations:
+        _apply_operation(world, op, delta)
+
+    for c in tx.commitments:
+        _apply_commitment(world, c, delta)
+
+    world.turn += 1
+    if "turn" in world.world_time:
+        world.world_time["turn"] = world.turn
+
+    return {"delta": delta, "turn": world.turn}
+
+
+def _ensure_v070_fields(world: WorldState) -> None:
+    if not hasattr(world, "events"):
+        world.events = []
+    if not hasattr(world, "utterances"):
+        world.utterances = []
+    if not hasattr(world, "hints"):
+        world.hints = {}
+    if not hasattr(world, "affordances"):
+        world.affordances = {}
+    if not hasattr(world, "_hook_status"):
+        world._hook_status = {}
+
+
+def _apply_operation(
+    world: WorldState, op: "Operation", delta: dict[str, Any]
+) -> None:
+    kind = op.kind
+    params = op.params
+
+    if kind == "move_player":
+        dest = params.get("destination")
+        entity = params.get("entity", "player")
+        old = [f for f in world.facts if f.predicate == "at" and f.args[0] == entity]
+        for o in old:
+            world.facts.discard(o)
+            delta["facts_removed"].append(str(o))
+        f = Fact("at", (entity, dest))
+        world.facts.add(f)
+        delta["facts_added"].append(str(f))
+        world.locations.add(dest)
+
+    elif kind == "speak":
+        world.utterances.append(
+            {
+                "entity": params.get("entity"),
+                "text": params.get("text"),
+                "turn": world.turn,
+            }
+        )
+        delta["utterances"].append(params.get("text", ""))
+
+    elif kind == "transfer_item":
+        item = params.get("item")
+        from_entity = params.get("from_entity")
+        to_entity = params.get("to_entity")
+        if from_entity:
+            old_f = Fact("has", (from_entity, item))
+            world.facts.discard(old_f)
+            delta["facts_removed"].append(str(old_f))
+        if to_entity:
+            new_f = Fact("has", (to_entity, item))
+            world.facts.add(new_f)
+            delta["facts_added"].append(str(new_f))
+
+    elif kind == "update_relation":
+        a = params.get("entity_a")
+        b = params.get("entity_b")
+        dim = params.get("dim")
+        val = params.get("delta", 0.0)
+        if a and b and dim:
+            rel = world.ensure_relation(a, b)
+            rel.update(dim, val)
+            delta["relations_changed"].append(f"{a}->{b} {dim}={val:+.2f}")
+
+    elif kind == "update_belief":
+        bid = params.get("belief_id")
+        val = params.get("delta", 0.0)
+        if bid in world.beliefs:
+            world.beliefs[bid].prob += val
+            world.beliefs[bid].clip()
+            delta["beliefs_changed"].append(
+                f"{bid} p={world.beliefs[bid].prob:.2f}"
+            )
+
+    elif kind == "mark_hook_status":
+        hid = params.get("hook_id")
+        status = params.get("status")
+        if hid:
+            world._hook_status[hid] = status
+            delta["hooks_changed"].append(f"{hid} -> {status}")
+
+    elif kind == "add_event":
+        world.events.append(
+            {
+                "type": params.get("event_type", "generic"),
+                "summary": params.get("summary", ""),
+                "turn": world.turn,
+            }
+        )
+        delta["events"].append(params.get("summary", ""))
+
+    elif kind in ("inner_monologue", "add_texture"):
+        pass  # no world state change
+
+
+def _apply_commitment(
+    world: WorldState, c: "Commitment", delta: dict[str, Any]
+) -> None:
+    if c.level == "event":
+        world.events.append({"description": c.description, "turn": world.turn})
+        delta["events"].append(c.description)
+
+    elif c.level == "utterance":
+        world.utterances.append({"description": c.description, "turn": world.turn})
+        delta["utterances"].append(c.description)
+
+    elif c.level == "affordance":
+        aid = c.metadata.get(
+            "affordance_id", f"aff_{world.turn}_{len(world.affordances)}"
+        )
+        world.affordances[aid] = {"description": c.description, "turn": world.turn}
+        delta["affordances_added"].append(aid)
+
+    elif c.level in ("texture", "hint", "belief_evidence", "inner_monologue"):
+        pass  # no direct world state change in MVP
 
 
 def _auto_init_new_entities(world: WorldState, segments: list[Segment]) -> None:
