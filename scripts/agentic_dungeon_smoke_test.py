@@ -167,51 +167,46 @@ def main() -> int:
         results.append(result)
         history.append(player_input)
 
-    # Summary
+    # Summary (v0.7.4: reuse analyzer computation for consistency)
     print(f"\n{'='*70}")
     print("FINAL SUMMARY")
     print("=" * 70)
 
-    # v0.7.2.1: three-state post-render tracking
-    pass_count = sum(1 for r in results if r["post_render"]["status"] == "pass")
-    repaired_count = sum(1 for r in results if r["post_render"]["status"] == "repaired")
-    failed_count = sum(1 for r in results if r["post_render"]["status"] == "failed")
+    # Import analyzer locally to avoid circular import issues
+    from scripts.analyze_agentic_run import _artifact_files, _analyze_turn, _compute_summary
+
+    artifact_map = _artifact_files(run_dir)
+    analyzer_turns = []
+    for turn_idx in sorted(artifact_map.keys()):
+        analyzer_turns.append(_analyze_turn(turn_idx, artifact_map[turn_idx]))
+    summary = _compute_summary(analyzer_turns)
+
     error_count = sum(1 for r in results if r["error"] is not None)
-    fallback_count = sum(
-        1 for r in results
-        if any(a.get("source") == "fallback" for a in r["transaction"].assumptions)
-    )
-    absence_response_count = sum(
-        1 for r in results
-        if any(a.get("source") == "absence_response" for a in r["transaction"].assumptions)
-    )
-    l2_checks_run = sum(r.get("l2_checks_run", 0) for r in results)
-
-    # unrepaired L2 rejects
-    unrepaired_l2 = sum(
-        1 for r in results
-        if r["post_render"]["status"] == "failed"
-        and any("L2 semantic: unsupported claim" in i for i in r["post_render"]["issues"])
-    )
-    hidden_nonpass = sum(
-        1 for r in results
-        if r["post_render"]["status"] == "failed"
-        and any("L2 semantic: hidden truth exposure" in i for i in r["post_render"]["issues"])
-    )
-
     total_time = sum(r.get("turn_wall_time_s", 0) for r in results)
 
-    print(f"Turns run:     {len(results)}")
-    print(f"Post-render pass:    {pass_count}")
-    print(f"Post-render repaired: {repaired_count}")
-    print(f"Post-render failed:  {failed_count}")
+    print(f"Turns run:     {summary['turns']}")
     print(f"Errors:         {error_count}")
-    print(f"Fallbacks:      {fallback_count}")
-    print(f"Absence responses:   {absence_response_count}")
-    print(f"L2 checks run:       {l2_checks_run}")
-    print(f"Unrepaired L2 rejects: {unrepaired_l2}")
-    print(f"Hidden truth non-pass: {hidden_nonpass}")
     print(f"Total wall time: {total_time:.2f}s  (avg {total_time/len(results):.2f}s)")
+
+    print("\n--- Sources ---")
+    for k, v in summary["sources"].items():
+        print(f"  {k}: {v}")
+
+    print("\n--- Fallback Taxonomy ---")
+    for k, v in summary["fallback_taxonomy"].items():
+        print(f"  {k}: {v}")
+
+    print("\n--- Validator ---")
+    for k, v in summary["validator"].items():
+        print(f"  {k}: {v}")
+
+    print("\n--- Post-render ---")
+    for k, v in summary["post_render"].items():
+        print(f"  {k}: {v}")
+
+    print("\n--- L2 Semantic ---")
+    for k, v in summary["l2_semantic"].items():
+        print(f"  {k}: {v}")
 
     # Acceptance criteria for 20-turn
     if turn_count >= 20:

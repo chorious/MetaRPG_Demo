@@ -6,6 +6,7 @@ It must NOT commit world changes.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from metarpg.agentic.model_client import LlmClient
@@ -62,6 +63,11 @@ def _build_system_prompt(brief: RenderBrief) -> str:
         "    - Do not link counts to mechanisms, responses, or sounds.",
         "    - Safe: 'old scratches', 'uneven wear', 'cold metal'.",
         "    - Unsafe: 'three marks waiting for a response', 'the scratches suggest a sequence'.",
+        "13. Current Turn Obligation (highest priority):",
+        "    - The current turn's player_input and action MUST be reflected in the output.",
+        "    - Do NOT render a previous turn's action as if it is the current action.",
+        "    - If response_mode is absence/unreachable/fallback, keep output short and grounded.",
+        "    - Respect must_address and must_not_claim from the obligation.",
     ]
     return "\n".join(lines)
 
@@ -84,6 +90,8 @@ def _build_user_prompt(brief: RenderBrief, story_packet: dict[str, Any]) -> str:
         "\n".join(brief.motifs_to_render) or "None",
         "## Forbidden",
         "\n".join(brief.forbidden_claims) or "None",
+        "## Current Turn Obligation",
+        json.dumps(brief.current_turn_obligation, ensure_ascii=False, indent=2) if brief.current_turn_obligation else "None",
         "## Output",
         "Write 1–3 short paragraphs of Chinese prose.",
     ]

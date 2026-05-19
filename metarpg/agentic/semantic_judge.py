@@ -214,6 +214,82 @@ def judge_render_claim_support(
 
 
 # ---------------------------------------------------------------------------
+# 4. judge_intent_fulfillment (v0.7.4)
+# ---------------------------------------------------------------------------
+
+
+def judge_intent_fulfillment(
+    player_input: str,
+    resolved_intent: dict[str, Any],
+    prose: str,
+    transaction_summary: dict[str, Any],
+    client: LlmClient | None = None,
+) -> SemanticJudgment:
+    """Judge whether rendered prose fulfills the current turn's player intent.
+
+    Returns a single judgment.
+    If client is None, returns a permissive 'pass' judgment.
+    """
+    if client is None:
+        return SemanticJudgment(
+            verdict="pass",
+            category="no_llm_available",
+            evidence="SemanticJudge skipped: no client provided",
+            suggested_downgrade=None,
+            confidence=0.0,
+        )
+
+    system_prompt = (
+        "You are a narrative semantics judge for an RPG engine.\n"
+        "Given the player's input, their resolved intent, and the rendered prose, "
+        "judge whether the prose actually responds to what the player tried to do THIS turn.\n"
+        "Output JSON only, no markdown fences.\n\n"
+        "Verdict rules:\n"
+        '- "pass" = prose clearly responds to the current turn\'s player action/target\n'
+        '- "downgrade" = prose responds to the general direction but mixes in stale context or wrong emphasis\n'
+        '- "reject" = prose narrates a different action, different target, or old turn events; '
+        'or treats an unreachable/absent target as if it were present and interacted with\n\n'
+        "Categories:\n"
+        '- "intent_fulfilled" = prose matches player_input and resolved_intent\n'
+        '- "wrong_action" = prose describes a different action than player_input\n'
+        '- "wrong_target" = prose focuses on a different target than resolved_intent\n'
+        '- "stale_context" = prose repeats or continues a previous turn\'s narrative instead of the current one\n'
+        '- "unsupported_continuation" = prose claims an action succeeded that the transaction did not commit\n'
+        '- "missing_refusal" = prose should acknowledge an absent/unreachable target but does not\n'
+        '- "over_answered" = prose invents outcomes or details not in the transaction\n\n'
+        "Output format:\n"
+        '{"verdict": "pass|downgrade|reject", "category": "...", '
+        '"evidence": "...", "suggested_downgrade": "...", "confidence": 0.0-1.0}'
+    )
+
+    user_prompt = json.dumps(
+        {
+            "player_input": player_input,
+            "resolved_intent": resolved_intent,
+            "prose": prose,
+            "transaction_summary": transaction_summary,
+            "instructions": (
+                "Do not penalize prose for omitting historical context. "
+                "Do penalize prose that narrates a different action or a different target than the current intent. "
+                "If the transaction was a fallback/absence/unreachable response, the prose should be short and grounded, "
+                "not a detailed narrative of a different action."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    results = _call_judge(system_prompt, user_prompt, client)
+    return results[0] if results else SemanticJudgment(
+        verdict="pass",
+        category="parse_error",
+        evidence="Judge returned no results",
+        suggested_downgrade=None,
+        confidence=0.0,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Shared LLM call helper
 # ---------------------------------------------------------------------------
 

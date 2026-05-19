@@ -722,10 +722,25 @@ def run_agentic_turn_v070(
     # v0.7.3: Deterministic Movement Path ----------------------------------
     move_target = _resolve_move_target(resolved_intent, reachable_locs)
     absent_refs = [r for r in resolved_intent.targets if not r.available]
+
+    # v0.7.4: Unreachable Location Response --------------------------------
+    known_locations = list(seed.locations.keys())
+    unreachable_refs = [
+        r for r in resolved_intent.targets
+        if r.kind == "location"
+        and r.canonical_id not in reachable_locs
+        and r.canonical_id in known_locations
+    ]
+
     if move_target:
         tx = _build_deterministic_move_tx(
             player_input, move_target, narrative_frame, draft_id
         )
+        tx.player_intent = {
+            "action_type": resolved_intent.action_type,
+            "unresolved": resolved_intent.unresolved,
+            "targets": [r.canonical_id for r in resolved_intent.targets],
+        }
         if run_logger:
             run_logger.emit(
                 turn_index, "director", "deterministic_movement",
@@ -738,9 +753,36 @@ def run_agentic_turn_v070(
                     "parsed": _to_dict(tx),
                 },
             )
+    # v0.7.4: Unreachable Location — known but not reachable from current location
+    elif unreachable_refs and resolved_intent.action_type == "move":
+        tx = _build_unreachable_response_tx(
+            player_input, unreachable_refs[0], narrative_frame, draft_id
+        )
+        tx.player_intent = {
+            "action_type": resolved_intent.action_type,
+            "unresolved": resolved_intent.unresolved,
+            "targets": [r.canonical_id for r in resolved_intent.targets],
+        }
+        if run_logger:
+            run_logger.emit(
+                turn_index, "director", "unreachable_location_response",
+                f"unreachable={unreachable_refs[0].canonical_id}"
+            )
+            run_logger.emit_artifact(
+                turn_index, "transaction_raw",
+                {
+                    "note": "unreachable_location_response (no Director call)",
+                    "parsed": _to_dict(tx),
+                },
+            )
     # v0.7.2: Absence Response — known-but-unavailable target + interact action
     elif absent_refs and resolved_intent.action_type in ("ask", "speak", "interact"):
         tx = _build_absence_response(player_input, narrative_frame, absent_refs, draft_id)
+        tx.player_intent = {
+            "action_type": resolved_intent.action_type,
+            "unresolved": resolved_intent.unresolved,
+            "targets": [r.canonical_id for r in resolved_intent.targets],
+        }
         if run_logger:
             run_logger.emit(
                 turn_index, "director", "absence_response",
@@ -758,7 +800,11 @@ def run_agentic_turn_v070(
         # Enrich tx with frame/id so downstream can use them if needed
         tx.id = draft_id
         tx.narrative_frame = narrative_frame
-        tx.player_intent = {"action_type": resolved_intent.action_type, "unresolved": resolved_intent.unresolved}
+        tx.player_intent = {
+            "action_type": resolved_intent.action_type,
+            "unresolved": resolved_intent.unresolved,
+            "targets": [r.canonical_id for r in resolved_intent.targets],
+        }
         if run_logger:
             run_logger.emit(
                 turn_index, "director", "transaction_produced",
@@ -791,6 +837,11 @@ def run_agentic_turn_v070(
 
     if val_result.status == "rejected":
         tx = _v070_fallback_tx(player_input, narrative_frame)
+        tx.player_intent = {
+            "action_type": resolved_intent.action_type,
+            "unresolved": resolved_intent.unresolved,
+            "targets": [r.canonical_id for r in resolved_intent.targets],
+        }
         if run_logger:
             run_logger.emit(turn_index, "validator", "fallback_activated", "rejected")
     elif val_result.transaction is not None:
@@ -1056,6 +1107,37 @@ def _build_absence_response(
             {
                 "source": "absence_response",
                 "reason": f"{','.join(r.canonical_id for r in absent_refs)} not in visible_entities",
+            }
+        ],
+    )
+
+
+def _build_unreachable_response_tx(
+    player_input: str,
+    unreachable_ref,
+    frame: NarrativeFrame,
+    draft_id: str = "",
+) -> TurnTransaction:
+    """Deterministic transaction when player tries to move to a known-but-unreachable location."""
+    target_name = unreachable_ref.canonical_id.replace("_", " ")
+    desc = f"Player attempts to move toward {target_name}, but it is not directly reachable from here."
+    return TurnTransaction(
+        id=draft_id,
+        player_input=player_input,
+        narrative_frame=frame,
+        operations=[
+            Operation("add_texture", {"description": f"The {target_name} is not directly reachable from here."}),
+            Operation("add_event", {"summary": f"Player attempts to move toward {target_name} but it is unreachable."}),
+        ],
+        commitments=[
+            Commitment("texture", f"Player notes that {target_name} is not directly reachable.", operation_index=0),
+            Commitment("event", f"Attempted movement to unreachable {target_name}.", operation_index=1),
+        ],
+        assumptions=[
+            {
+                "source": "unreachable_location_response",
+                "target": unreachable_ref.canonical_id,
+                "reason": "Target location known but not reachable from current location",
             }
         ],
     )

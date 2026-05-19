@@ -50,6 +50,8 @@ class RenderBrief:
     visible_entities: list[str] = field(default_factory=list)
     visible_objects: list[str] = field(default_factory=list)
     absent_entities: list[str] = field(default_factory=list)
+    # v0.7.4: current-turn obligation to prevent stale-context rendering
+    current_turn_obligation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

@@ -122,6 +122,26 @@ def check_rendered_prose(
                     f"L2 semantic: unsupported claim ({rc_judgment.category}): "
                     f"{rc_judgment.evidence}"
                 )
+
+            # v0.7.4: Intent Fulfillment check
+            if_judgment = judge.judge_intent_fulfillment(
+                player_input=tx.player_input or "",
+                resolved_intent=tx.player_intent or {},
+                prose=prose,
+                transaction_summary=tx_summary,
+                client=client,
+            )
+            semantic_judgments.append({
+                "check": "intent_fulfillment",
+                "verdict": if_judgment.verdict,
+                "category": if_judgment.category,
+                "evidence": if_judgment.evidence,
+            })
+            if if_judgment.verdict == "reject":
+                issues.append(
+                    f"L2 semantic: intent fulfillment ({if_judgment.category}): "
+                    f"{if_judgment.evidence}"
+                )
         except Exception as exc:
             # L2 failure is non-blocking; L3 already ran
             semantic_judgments.append({"check": "error", "error": str(exc)})
@@ -129,9 +149,10 @@ def check_rendered_prose(
     if not issues:
         return {"status": "pass", "issues": [], "semantic_judgments": semantic_judgments}
 
-    # v0.7.2.1: classify as failed if any critical L2 issue
+    # v0.7.4: classify as failed if any critical L2 issue
     has_l2_reject = any(
         "L2 semantic: unsupported claim" in iss or
+        "L2 semantic: intent fulfillment" in iss or
         ("L2 semantic: hidden truth exposure" in iss and "reject" in iss)
         for iss in issues
     )

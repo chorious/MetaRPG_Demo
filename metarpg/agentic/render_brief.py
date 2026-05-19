@@ -1,6 +1,8 @@
 """Build RenderBrief from validated transaction, world diff, and narrative frame."""
 from __future__ import annotations
 
+from typing import Any
+
 from metarpg.agentic.transaction import NarrativeFrame, RenderBrief, TurnTransaction
 from metarpg.models import WorldState
 
@@ -29,6 +31,9 @@ def build_render_brief(
     visible_entities = _get_visible_entities(world, player_location)
     absent_entities = _get_absent_entities(world, visible_entities)
 
+    # v0.7.4: current-turn obligation to prevent stale-context rendering
+    obligation = _build_current_turn_obligation(tx)
+
     return RenderBrief(
         committed_events=recent_events,
         visible_reactions=[],
@@ -41,7 +46,50 @@ def build_render_brief(
         visible_entities=visible_entities,
         visible_objects=[],  # TODO: populate from world.items if needed
         absent_entities=absent_entities,
+        # v0.7.4 current-turn obligation
+        current_turn_obligation=obligation,
     )
+
+
+def _build_current_turn_obligation(tx: TurnTransaction) -> dict[str, Any]:
+    """Build the current-turn obligation dict from transaction metadata."""
+    # Infer source from assumptions (set by runner branches)
+    source = "director"
+    if tx.assumptions:
+        source = tx.assumptions[0].get("source", "director")
+
+    action_type = tx.player_intent.get("action_type", "")
+    target_ids = tx.player_intent.get("targets", [])
+
+    obligation: dict[str, Any] = {
+        "player_input": tx.player_input,
+        "action_type": action_type,
+        "target_ids": target_ids,
+        "source": source,
+    }
+
+    if source == "absence_response":
+        obligation["response_mode"] = "absence"
+        obligation["must_address"] = ["目标不在场/不可达"]
+        obligation["must_not_claim"] = ["不要渲染前一回合的动作成功"]
+    elif source == "deterministic_movement":
+        obligation["response_mode"] = "normal"
+        obligation["must_address"] = ["玩家移动到目的地"]
+    elif source == "fallback":
+        obligation["response_mode"] = "fallback"
+        obligation["must_address"] = ["承认动作无法推进或只给 minimal texture"]
+        obligation["must_not_claim"] = [
+            "不要渲染前一回合的动作成功",
+            "不要声称新状态变化发生",
+        ]
+    elif source == "unreachable_location_response":
+        obligation["response_mode"] = "unreachable"
+        obligation["must_address"] = ["目标地点存在但当前无法直接到达"]
+        obligation["must_not_claim"] = ["不要渲染玩家已成功到达该地点"]
+    else:
+        obligation["response_mode"] = "normal"
+
+    return obligation
 
 
 def _get_player_location(world: WorldState) -> str:

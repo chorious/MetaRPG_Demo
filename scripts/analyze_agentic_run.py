@@ -88,16 +88,17 @@ def _analyze_turn(
     result["candidate_hints_count"] = len(frame.get("candidate_hints", [])) if frame else 0
     result["motifs_to_use"] = frame.get("motifs_to_use", []) if frame else []
 
-    # --- transaction_raw ---
+    # --- transaction_raw + validated: unified source + fallback taxonomy ---
     raw_note = ""
+    fallback_type = None
     if tx_raw:
-        # v0.7.2.1: absence_response stores note at top level, not in director_raw_output
-        # v0.7.3: deterministic_movement also stores note at top level
         top_note = tx_raw.get("note", "")
         if top_note.startswith("absence_response"):
             raw_note = "absence_response"
         elif top_note.startswith("deterministic_movement"):
             raw_note = "deterministic_movement"
+        elif top_note.startswith("unreachable_location_response"):
+            raw_note = "unreachable_location_response"
         else:
             raw = tx_raw.get("director_raw_output")
             if raw is None:
@@ -106,7 +107,15 @@ def _analyze_turn(
                 raw_note = "absence_response"
             elif isinstance(raw, dict):
                 raw_note = "director"
+
+    # v0.7.4: classify fallback reason using validator artifact
+    if tx_val and tx_val.get("status") == "rejected":
+        fallback_type = "validation_rejection_fallback"
+    elif raw_note == "fallback":
+        fallback_type = "director_schema_fallback"
+
     result["source"] = raw_note
+    result["fallback_type"] = fallback_type
 
     # move_player missing destination check (raw transaction)
     raw_ops = (tx_raw.get("parsed", {}) if tx_raw else {}).get("operations", [])
@@ -163,29 +172,36 @@ def _compute_summary(turns: list[dict[str, Any]]) -> dict[str, Any]:
     if total == 0:
         return {}
 
-    # Source counts
+    # Source counts (v0.7.4 taxonomy)
     fallback_count = sum(1 for t in turns if t["source"] == "fallback")
     absence_count = sum(1 for t in turns if t["source"] == "absence_response")
     deterministic_move_count = sum(1 for t in turns if t["source"] == "deterministic_movement")
+    unreachable_count = sum(1 for t in turns if t["source"] == "unreachable_location_response")
     input_guard_count = sum(1 for t in turns if t["source"] == "input_guard")
+
+    # Fallback taxonomy (v0.7.4)
+    director_schema_fallback = sum(1 for t in turns if t.get("fallback_type") == "director_schema_fallback")
+    validation_rejection_fallback = sum(1 for t in turns if t.get("fallback_type") == "validation_rejection_fallback")
+    total_fallback = director_schema_fallback + validation_rejection_fallback
 
     # Validator
     accepted_turns = sum(1 for t in turns if t["accepted"])
     downgraded_turns = sum(1 for t in turns if t["downgraded"])
     rejected_turns = sum(1 for t in turns if t["rejected"])
+    rejected_then_fallback = sum(1 for t in turns if t["rejected"] and t.get("fallback_type") == "validation_rejection_fallback")
     downgrade_records = sum(len(t["downgrade_records"]) for t in turns)
 
-    # Post-render
-    post_pass = sum(1 for t in turns if t["post_render_status"] == "pass")
-    post_repair = sum(1 for t in turns if t["post_render_status"] == "repaired")
-    post_failed = sum(1 for t in turns if t["post_render_status"] == "failed")
-    # v0.7.3: repair loop metrics
+    # Post-render (v0.7.4: initial vs final)
+    initial_pass = sum(1 for t in turns if t["post_render_status"] == "pass")
     initial_failed = sum(
         1 for t in turns
         if t["post_render_status"] == "failed" and not t.get("repair_attempted")
     )
-    repaired_count = sum(1 for t in turns if t["post_render_status"] == "repaired")
+    post_repair = sum(1 for t in turns if t["post_render_status"] == "repaired")
+    post_failed = sum(1 for t in turns if t["post_render_status"] == "failed")
     repair_attempts = sum(1 for t in turns if t.get("repair_attempted"))
+    final_pass = initial_pass + post_repair
+    final_failed = post_failed
 
     # L2
     l2_judgments = sum(t["l2_judgments_count"] for t in turns)
@@ -229,19 +245,28 @@ def _compute_summary(turns: list[dict[str, Any]]) -> dict[str, Any]:
             "fallback": fallback_count,
             "absence_response": absence_count,
             "deterministic_movement": deterministic_move_count,
+            "unreachable_location_response": unreachable_count,
             "input_guard": input_guard_count,
-            "director": total - fallback_count - absence_count - input_guard_count - deterministic_move_count,
+            "director": total - fallback_count - absence_count - input_guard_count - deterministic_move_count - unreachable_count,
+        },
+        "fallback_taxonomy": {
+            "director_schema_fallback_count": director_schema_fallback,
+            "validation_rejection_fallback_count": validation_rejection_fallback,
+            "total_fallback_count": total_fallback,
         },
         "validator": {
             "accepted_turns": accepted_turns,
             "downgraded_turns": downgraded_turns,
             "rejected_turns": rejected_turns,
+            "rejected_then_fallback_count": rejected_then_fallback,
             "downgrade_records": downgrade_records,
         },
         "post_render": {
-            "pass": post_pass,
+            "initial_pass": initial_pass,
+            "initial_failed": initial_failed,
             "repaired": post_repair,
-            "failed": post_failed,
+            "final_pass": final_pass,
+            "final_failed": final_failed,
             "repair_attempts": repair_attempts,
         },
         "l2_semantic": {
@@ -280,11 +305,11 @@ def _invariant_violations(summary: dict[str, Any]) -> list[str]:
         violations.append(
             f"invalid_hook_ids={summary['hooks']['invalid_hook_ids']}"
         )
-    if summary["l2_semantic"]["hard_rejects"] > 0:
+    if summary["l2_semantic"].get("hard_rejects", 0) > 0:
         violations.append(
             f"unrepaired_l2_rejects={summary['l2_semantic']['hard_rejects']}"
         )
-    if summary["l2_semantic"]["hidden_truth_nonpass"] > 0:
+    if summary["l2_semantic"].get("hidden_truth_nonpass", 0) > 0:
         violations.append(
             f"hidden_truth_nonpass={summary['l2_semantic']['hidden_truth_nonpass']}"
         )
@@ -293,13 +318,17 @@ def _invariant_violations(summary: dict[str, Any]) -> list[str]:
 
 def _print_table(summary: dict[str, Any]) -> None:
     print("=" * 60)
-    print("Agentic Run Analyzer -- v0.7.2.1")
+    print("Agentic Run Analyzer -- v0.7.4")
     print("=" * 60)
 
     print(f"\nTurns: {summary['turns']}")
 
     print("\n--- Sources ---")
     for k, v in summary["sources"].items():
+        print(f"  {k}: {v}")
+
+    print("\n--- Fallback Taxonomy ---")
+    for k, v in summary["fallback_taxonomy"].items():
         print(f"  {k}: {v}")
 
     print("\n--- Validator ---")
