@@ -1,11 +1,9 @@
-"""Tests for reference_resolver.py — L1 canonical ID resolution."""
+"""Tests for reference_resolver.py -- L1 canonical ID resolution."""
 from __future__ import annotations
 
 import pytest
 
 from metarpg.agentic.reference_resolver import (
-    ResolvedIntent,
-    ResolvedRef,
     _infer_action_type,
     resolve_references,
 )
@@ -38,12 +36,17 @@ class TestResolveReferencesDeterministic:
         }
         intent = resolve_references(
             player_input="我去下层门",
-            visible_entities=["alen"],
-            visible_items=[],
-            reachable_locations=["sealed_lower_door"],
-            active_hooks=[],
-            active_motifs=[],
+            known_entities=["alen"],
+            known_items=[],
+            known_locations=["sealed_lower_door"],
+            known_hooks=[],
+            known_motifs=[],
             aliases_map=aliases,
+            available_entities=["alen"],
+            available_items=[],
+            available_locations=["sealed_lower_door"],
+            available_hooks=[],
+            available_motifs=[],
             client=None,
         )
         assert len(intent.targets) >= 1
@@ -54,12 +57,17 @@ class TestResolveReferencesDeterministic:
         aliases = {"alen": ["艾伦", "Alen"]}
         intent = resolve_references(
             player_input="艾伦在哪里",
-            visible_entities=["alen"],
-            visible_items=[],
-            reachable_locations=[],
-            active_hooks=[],
-            active_motifs=[],
+            known_entities=["alen"],
+            known_items=[],
+            known_locations=[],
+            known_hooks=[],
+            known_motifs=[],
             aliases_map=aliases,
+            available_entities=["alen"],
+            available_items=[],
+            available_locations=[],
+            available_hooks=[],
+            available_motifs=[],
             client=None,
         )
         cids = {t.canonical_id for t in intent.targets}
@@ -69,12 +77,17 @@ class TestResolveReferencesDeterministic:
         aliases = {"sealed_lower_door": ["下层门"]}
         intent = resolve_references(
             player_input="我去看那扇封闭的下层门",
-            visible_entities=[],
-            visible_items=[],
-            reachable_locations=["sealed_lower_door"],
-            active_hooks=[],
-            active_motifs=[],
+            known_entities=[],
+            known_items=[],
+            known_locations=["sealed_lower_door"],
+            known_hooks=[],
+            known_motifs=[],
             aliases_map=aliases,
+            available_entities=[],
+            available_items=[],
+            available_locations=["sealed_lower_door"],
+            available_hooks=[],
+            available_motifs=[],
             client=None,
         )
         cids = {t.canonical_id for t in intent.targets}
@@ -85,12 +98,17 @@ class TestResolveReferencesDeterministic:
     def test_no_match(self):
         intent = resolve_references(
             player_input="完全不存在的词",
-            visible_entities=[],
-            visible_items=[],
-            reachable_locations=[],
-            active_hooks=[],
-            active_motifs=[],
+            known_entities=[],
+            known_items=[],
+            known_locations=[],
+            known_hooks=[],
+            known_motifs=[],
             aliases_map={},
+            available_entities=[],
+            available_items=[],
+            available_locations=[],
+            available_hooks=[],
+            available_motifs=[],
             client=None,
         )
         assert intent.unresolved == ["完全不存在的词"]
@@ -101,12 +119,17 @@ class TestResolveReferencesDeterministic:
         aliases = {"black_ash": ["黑灰", "灰烬"]}
         intent = resolve_references(
             player_input="这黑灰是怎么回事",
-            visible_entities=[],
-            visible_items=["black_ash"],
-            reachable_locations=[],
-            active_hooks=[],
-            active_motifs=[],
+            known_entities=[],
+            known_items=["black_ash"],
+            known_locations=[],
+            known_hooks=[],
+            known_motifs=[],
             aliases_map=aliases,
+            available_entities=[],
+            available_items=["black_ash"],
+            available_locations=[],
+            available_hooks=[],
+            available_motifs=[],
             client=None,
         )
         cids = {p.canonical_id for p in intent.props}
@@ -117,12 +140,17 @@ class TestResolveReferencesDeterministic:
         aliases = {"hook_black_ash_enigma": ["黑灰之谜", "ash mystery"]}
         intent = resolve_references(
             player_input="黑灰之谜到底是什么",
-            visible_entities=[],
-            visible_items=[],
-            reachable_locations=[],
-            active_hooks=["hook_black_ash_enigma"],
-            active_motifs=[],
+            known_entities=[],
+            known_items=[],
+            known_locations=[],
+            known_hooks=["hook_black_ash_enigma"],
+            known_motifs=[],
             aliases_map=aliases,
+            available_entities=[],
+            available_items=[],
+            available_locations=[],
+            available_hooks=["hook_black_ash_enigma"],
+            available_motifs=[],
             client=None,
         )
         cids = {p.canonical_id for p in intent.props}
@@ -131,12 +159,17 @@ class TestResolveReferencesDeterministic:
     def test_empty_input(self):
         intent = resolve_references(
             player_input="",
-            visible_entities=[],
-            visible_items=[],
-            reachable_locations=[],
-            active_hooks=[],
-            active_motifs=[],
+            known_entities=[],
+            known_items=[],
+            known_locations=[],
+            known_hooks=[],
+            known_motifs=[],
             aliases_map={},
+            available_entities=[],
+            available_items=[],
+            available_locations=[],
+            available_hooks=[],
+            available_motifs=[],
             client=None,
         )
         assert intent.action_type == "none"

@@ -116,9 +116,31 @@ def _check_operation(op: Operation, index: int, world: WorldState) -> list[Valid
                 )
             )
 
+    elif kind == "observe_reaction":
+        entity = params.get("entity")
+        # "environment" is a pseudo-entity for ambient observations
+        if entity and entity not in ("player", "environment") and not _entity_present(entity, world):
+            issues.append(
+                ValidationIssue(
+                    severity="hard_fail",
+                    type="absent_entity_reaction",
+                    reason=f"observe_reaction for absent entity: {entity}",
+                    operation_index=index,
+                )
+            )
+
     elif kind == "move_player":
         destination = params.get("destination")
-        if destination and not _location_exists(destination, world):
+        if not destination:
+            issues.append(
+                ValidationIssue(
+                    severity="hard_fail",
+                    type="missing_destination",
+                    reason="move_player operation missing destination param",
+                    operation_index=index,
+                )
+            )
+        elif not _location_exists(destination, world):
             issues.append(
                 ValidationIssue(
                     severity="hard_fail",

@@ -265,10 +265,13 @@ def _parse_transaction(raw: dict[str, Any]) -> TurnTransaction:
         elif isinstance(a, str):
             assumptions.append({"note": a})
 
-    # Normalize move_player params: target_location -> destination
+    # Normalize move_player params: target_location / target -> destination
     for op in ops:
-        if op.kind == "move_player" and "target_location" in op.params and "destination" not in op.params:
-            op.params["destination"] = op.params.pop("target_location")
+        if op.kind == "move_player":
+            if "target_location" in op.params and "destination" not in op.params:
+                op.params["destination"] = op.params.pop("target_location")
+            if "target" in op.params and "destination" not in op.params:
+                op.params["destination"] = op.params.pop("target")
 
     return TurnTransaction(
         player_input=raw.get("player_input", ""),
@@ -311,6 +314,10 @@ def _validate_structure(tx: TurnTransaction, frame: NarrativeFrame) -> None:
                     )
             if op.kind == "move_player":
                 dest = op.params.get("destination", "")
+                if not dest:
+                    raise ValueError(
+                        "move_player operation missing destination after normalization"
+                    )
                 if dest and reachable_locs and dest not in reachable_locs:
                     raise ValueError(
                         f"move_player destination {dest!r} not in reachable locations. "

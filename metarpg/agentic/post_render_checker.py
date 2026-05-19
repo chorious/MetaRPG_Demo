@@ -43,7 +43,12 @@ def check_rendered_prose(
     """Check rendered prose for violations outside the validated transaction.
 
     Returns:
-        {"status": "pass" | "light_repair", "issues": list[str]}
+        {"status": "pass" | "repaired" | "failed", "issues": list[str]}
+
+    Status semantics (v0.7.2.1):
+        pass    = L3 clean + L2 pass
+        repaired = issues found but not critical (L3 hits or L2 downgrade)
+        failed  = L2 reject or hidden-truth non-pass (critical)
     """
     issues: list[str] = []
 
@@ -121,9 +126,23 @@ def check_rendered_prose(
             # L2 failure is non-blocking; L3 already ran
             semantic_judgments.append({"check": "error", "error": str(exc)})
 
-    if issues:
-        return {"status": "light_repair", "issues": issues, "semantic_judgments": semantic_judgments}
-    return {"status": "pass", "issues": [], "semantic_judgments": semantic_judgments}
+    if not issues:
+        return {"status": "pass", "issues": [], "semantic_judgments": semantic_judgments}
+
+    # v0.7.2.1: classify as failed if any critical L2 issue
+    has_l2_reject = any(
+        "L2 semantic: unsupported claim" in iss or
+        ("L2 semantic: hidden truth exposure" in iss and "reject" in iss)
+        for iss in issues
+    )
+    # hidden truth downgrade is also non-pass
+    has_hidden_nonpass = any(
+        "L2 semantic: hidden truth exposure" in iss
+        for iss in issues
+    )
+    if has_l2_reject or has_hidden_nonpass:
+        return {"status": "failed", "issues": issues, "semantic_judgments": semantic_judgments}
+    return {"status": "repaired", "issues": issues, "semantic_judgments": semantic_judgments}
 
 
 # ---------------------------------------------------------------------------

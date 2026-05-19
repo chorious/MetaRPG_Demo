@@ -149,7 +149,8 @@ def test_v070_mvp_three_turns():
 
     # Turn 3 assertions
     r3 = results[2]
-    assert r3["narrative_frame"].beat in ("threshold_crossing", "arrival")
+    # "去看" triggers inspect -> inspection beat; the move to door happens via operation
+    assert r3["narrative_frame"].beat in ("inspection", "threshold_crossing", "arrival")
     assert any(
         f.predicate == "at" and f.args == ("player", "sealed_lower_door")
         for f in world.facts

@@ -49,7 +49,7 @@ def test_alias_leak_detected():
     tx = _make_tx()
     prose = "你看到了禁忌之门在发光。"
     result = check_rendered_prose(prose, tx, world)
-    assert result["status"] == "light_repair"
+    assert result["status"] == "repaired"
     assert any("禁忌之门" in issue for issue in result["issues"])
 
 
@@ -58,7 +58,7 @@ def test_alias_leak_case_insensitive():
     tx = _make_tx()
     prose = "三重封印的传说流传已久。"
     result = check_rendered_prose(prose, tx, world)
-    assert result["status"] == "light_repair"
+    assert result["status"] == "repaired"
     assert any("三重封印" in issue for issue in result["issues"])
 
 
@@ -79,7 +79,7 @@ def test_npc_inner_monologue_detected():
     tx = _make_tx()
     prose = "艾伦心想：他到底知道多少？"
     result = check_rendered_prose(prose, tx, WorldState())
-    assert result["status"] == "light_repair"
+    assert result["status"] == "repaired"
     assert any("inner monologue" in issue for issue in result["issues"])
 
 
@@ -87,7 +87,7 @@ def test_npc_inner_multiple_indicators():
     tx = _make_tx()
     prose = "他在心里默念着，心底泛起一丝疑虑。"
     result = check_rendered_prose(prose, tx, WorldState())
-    assert result["status"] == "light_repair"
+    assert result["status"] == "repaired"
     # Only one issue even if multiple indicators hit
     assert sum(1 for i in result["issues"] if "inner monologue" in i) == 1
 
@@ -108,7 +108,7 @@ def test_debug_term_detected():
     tx = _make_tx()
     prose = "DEBUG: 场景加载完成。"
     result = check_rendered_prose(prose, tx, WorldState())
-    assert result["status"] == "light_repair"
+    assert result["status"] == "repaired"
     assert any("Debug" in issue for issue in result["issues"])
 
 
@@ -116,7 +116,7 @@ def test_system_term_detected():
     tx = _make_tx()
     prose = "SYSTEM 提示：TRANSACTION 已提交。"
     result = check_rendered_prose(prose, tx, WorldState())
-    assert result["status"] == "light_repair"
+    assert result["status"] == "repaired"
 
 
 def test_no_debug_terms():
@@ -150,5 +150,5 @@ def test_multiple_violations_all_reported():
     tx = _make_tx()
     prose = "DEBUG: 艾伦心想，禁忌之门即将开启。"
     result = check_rendered_prose(prose, tx, world)
-    assert result["status"] == "light_repair"
+    assert result["status"] == "repaired"
     assert len(result["issues"]) == 3  # alias, inner monologue, debug

@@ -24,6 +24,7 @@ class SemanticJudgment:
     evidence: str
     suggested_downgrade: str | None
     confidence: float
+    hook_id: str | None = None  # v0.7.2.1: only populated by judge_hook_relevance
 
 
 # ---------------------------------------------------------------------------
@@ -115,14 +116,29 @@ def judge_hidden_truth_exposure(
         '"evidence": "...", "suggested_downgrade": "...", "confidence": 0.0-1.0}'
     )
 
+    # v0.7.3: include symbolic_risk_patterns and safe_hint_boundary
+    ht_payload = []
+    for t in hidden_truths:
+        entry = {
+            "id": t.get("id", ""),
+            "statement": t.get("statement", ""),
+        }
+        if "symbolic_risk_patterns" in t:
+            entry["symbolic_risk_patterns"] = t["symbolic_risk_patterns"]
+        if "safe_hint_boundary" in t:
+            entry["safe_hint_boundary"] = t["safe_hint_boundary"]
+        ht_payload.append(entry)
+
     user_prompt = json.dumps(
         {
             "text": text,
-            "hidden_truths": [
-                {"id": t.get("id", ""), "statement": t.get("statement", "")}
-                for t in hidden_truths
-            ],
+            "hidden_truths": ht_payload,
             "reveal_policy": reveal_policy,
+            "instructions": (
+                "Do not flag text that only mentions numbers or objects in isolation. "
+                "Only flag when a specific combination (number + object + action/response context) "
+                "creates a bridge to the hidden truth. Use safe_hint_boundary.allowed as guidance."
+            ),
         },
         ensure_ascii=False,
         indent=2,
@@ -240,6 +256,7 @@ def _call_judge(
                 evidence=j.get("evidence", ""),
                 suggested_downgrade=j.get("suggested_downgrade"),
                 confidence=float(j.get("confidence", 0.5)),
+                hook_id=j.get("hook_id"),
             )
         )
 

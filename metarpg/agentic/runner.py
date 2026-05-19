@@ -62,9 +62,10 @@ from metarpg.agentic.narrative_grammar import NarrativeGrammar, load_grammar
 from metarpg.agentic.post_render_checker import check_rendered_prose
 from metarpg.agentic.reference_resolver import resolve_references
 from metarpg.agentic.render_brief import build_render_brief
+from metarpg.agentic.render_repair import run_render_repair
 from metarpg.agentic.renderer_agent import run_renderer
 from metarpg.agentic.seed_loader import WorldSeed, load_seed
-from metarpg.agentic.transaction import NarrativeFrame, TurnTransaction
+from metarpg.agentic.transaction import Commitment, NarrativeFrame, Operation, TurnTransaction
 from metarpg.agentic.transaction_validator import validate_transaction
 
 
@@ -595,7 +596,7 @@ def run_agentic_turn_v070(
       4. Validator -> accepted / downgraded / rejected.
       5. Committer -> updated WorldState.
       6. RenderBrief + Renderer (DeepSeek Flash) -> Chinese prose.
-      7. Post-render checker -> pass / light_repair.
+      7. Post-render checker -> pass / repaired / failed.
       8. Primitives: advance_time, tick entities.
     """
     if history is None:
@@ -718,9 +719,27 @@ def run_agentic_turn_v070(
             _to_dict(narrative_frame),
         )
 
-    # v0.7.2: Absence Response — known-but-unavailable target + interact action
+    # v0.7.3: Deterministic Movement Path ----------------------------------
+    move_target = _resolve_move_target(resolved_intent, reachable_locs)
     absent_refs = [r for r in resolved_intent.targets if not r.available]
-    if absent_refs and resolved_intent.action_type in ("ask", "speak", "interact"):
+    if move_target:
+        tx = _build_deterministic_move_tx(
+            player_input, move_target, narrative_frame, draft_id
+        )
+        if run_logger:
+            run_logger.emit(
+                turn_index, "director", "deterministic_movement",
+                f"destination={move_target}"
+            )
+            run_logger.emit_artifact(
+                turn_index, "transaction_raw",
+                {
+                    "note": "deterministic_movement (no Director call)",
+                    "parsed": _to_dict(tx),
+                },
+            )
+    # v0.7.2: Absence Response — known-but-unavailable target + interact action
+    elif absent_refs and resolved_intent.action_type in ("ask", "speak", "interact"):
         tx = _build_absence_response(player_input, narrative_frame, absent_refs, draft_id)
         if run_logger:
             run_logger.emit(
@@ -811,6 +830,35 @@ def run_agentic_turn_v070(
 
     # 9. Post-render checker --------------------------------------------------
     check_result = check_rendered_prose(prose, tx, world, client=local_client)
+
+    # v0.7.3: L2 Repair Loop — attempt one-shot repair if failed
+    if check_result["status"] == "failed":
+        try:
+            repaired_prose = run_render_repair(
+                prose,
+                check_result["issues"],
+                check_result.get("semantic_judgments", []),
+                render_brief,
+                client=flash_client,
+            )
+            re_check = check_rendered_prose(repaired_prose, tx, world, client=local_client)
+            if re_check["status"] == "pass":
+                prose = repaired_prose
+                check_result = {
+                    "status": "repaired",
+                    "issues": re_check.get("issues", []),
+                    "semantic_judgments": re_check.get("semantic_judgments", []),
+                    "repair_attempted": True,
+                    "repair_success": True,
+                }
+            else:
+                check_result["repair_attempted"] = True
+                check_result["repair_success"] = False
+        except Exception as exc:
+            # Repair call failure is non-blocking
+            check_result["repair_attempted"] = True
+            check_result["repair_error"] = str(exc)
+
     if run_logger:
         run_logger.emit(
             turn_index, "post_render", check_result["status"],
@@ -925,6 +973,57 @@ def _location_reachable(loc_id: str, player_loc: str, seed: WorldSeed) -> bool:
     current = seed.locations.get(player_loc, {})
     exits = current.get("exits", [])
     return loc_id in exits
+
+
+def _resolve_move_target(
+    resolved_intent,
+    reachable_locs: list[str],
+) -> str | None:
+    """Check if this intent qualifies for deterministic movement.
+
+    Returns the target location canonical_id, or None.
+    """
+    if resolved_intent.action_type != "move":
+        return None
+    if len(resolved_intent.targets) != 1:
+        return None
+    target = resolved_intent.targets[0]
+    if target.kind != "location":
+        return None
+    if not target.available:
+        return None
+    if target.canonical_id not in reachable_locs:
+        return None
+    return target.canonical_id
+
+
+def _build_deterministic_move_tx(
+    player_input: str,
+    target_id: str,
+    frame: NarrativeFrame,
+    draft_id: str = "",
+) -> TurnTransaction:
+    """Deterministic transaction for a simple, valid player movement."""
+    desc = f"Player moves to {target_id.replace('_', ' ')}."
+    return TurnTransaction(
+        id=draft_id,
+        player_input=player_input,
+        narrative_frame=frame,
+        operations=[
+            Operation("move_player", {"destination": target_id, "description": desc}),
+            Operation("add_event", {"summary": desc}),
+        ],
+        commitments=[
+            Commitment("canon", desc, operation_index=0),
+            Commitment("event", desc, operation_index=1),
+        ],
+        assumptions=[
+            {
+                "source": "deterministic_movement",
+                "reason": f"action_type=move, target={target_id} is reachable",
+            }
+        ],
+    )
 
 
 def _build_absence_response(

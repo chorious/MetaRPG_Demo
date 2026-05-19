@@ -45,6 +45,11 @@ class RenderBrief:
     motifs_to_render: list[str] = field(default_factory=list)
     style_constraints: list[str] = field(default_factory=list)
     forbidden_claims: list[str] = field(default_factory=list)
+    # v0.7.3: grounding fields for spatial consistency
+    player_location: str = ""
+    visible_entities: list[str] = field(default_factory=list)
+    visible_objects: list[str] = field(default_factory=list)
+    absent_entities: list[str] = field(default_factory=list)
 
 
 @dataclass

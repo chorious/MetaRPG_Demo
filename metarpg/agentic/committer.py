@@ -222,7 +222,7 @@ def _apply_operation(
         dest = params.get("destination")
         entity = params.get("entity", "player")
         if not dest:
-            return
+            raise ValueError(f"move_player missing destination: params={params}")
         old = [f for f in world.facts if f.predicate == "at" and f.args[0] == entity]
         for o in old:
             world.facts.discard(o)

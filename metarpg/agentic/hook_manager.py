@@ -206,17 +206,33 @@ def _match_hooks_v071(
                 client=client,
             )
             for j in judgments:
+                real_hook_id = j.hook_id or j.category
+                # v0.7.2.1: whitelist guard — only canonical seed hook ids allowed
+                if real_hook_id not in seed.active_hooks:
+                    semantic_judgments.append({
+                        "hook_id": None,
+                        "category": j.category,
+                        "verdict": "ignored",
+                        "evidence": f"Non-canonical hook_id '{real_hook_id}' ignored",
+                        "confidence": j.confidence,
+                    })
+                    continue
                 semantic_judgments.append({
-                    "hook_id": j.category,
+                    "hook_id": real_hook_id,
+                    "category": j.category,
                     "verdict": j.verdict,
                     "evidence": j.evidence,
                     "confidence": j.confidence,
                 })
                 if j.verdict == "pass":
-                    matched.append(j.category)
+                    matched.append(real_hook_id)
         except Exception:
             # L2 failure is non-blocking; exact-match results are preserved
             pass
+
+    # v0.7.2.1: defensive guard — active_hooks can only contain canonical ids
+    canonical_ids = set(seed.active_hooks.keys())
+    matched = [h for h in matched if h in canonical_ids]
 
     return matched, semantic_judgments
 

@@ -115,6 +115,19 @@ hidden_truths:
     statement: The lower vault door responds to a three-note bell sequence.
     aliases: [bell sequence, three-note chime, vault door song]
     reveal_policy: hint first, never direct exposition in opening turns
+    symbolic_risk_patterns:
+      - concepts: [three, door, response]
+      - concepts: [three, bell, mechanism]
+      - concepts: [three marks, waiting, sound]
+    safe_hint_boundary:
+      allowed:
+        - old scratches
+        - uneven wear
+        - cold metal vibration
+      disallowed:
+        - exact count of three linked to mechanism
+        - bell/chime imagery near door before evidence
+        - waiting for a response near three marks
 
 relations:
   - from: player

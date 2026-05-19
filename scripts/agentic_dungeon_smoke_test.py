@@ -172,8 +172,10 @@ def main() -> int:
     print("FINAL SUMMARY")
     print("=" * 70)
 
+    # v0.7.2.1: three-state post-render tracking
     pass_count = sum(1 for r in results if r["post_render"]["status"] == "pass")
-    repair_count = sum(1 for r in results if r["post_render"]["status"] == "light_repair")
+    repaired_count = sum(1 for r in results if r["post_render"]["status"] == "repaired")
+    failed_count = sum(1 for r in results if r["post_render"]["status"] == "failed")
     error_count = sum(1 for r in results if r["error"] is not None)
     fallback_count = sum(
         1 for r in results
@@ -185,15 +187,30 @@ def main() -> int:
     )
     l2_checks_run = sum(r.get("l2_checks_run", 0) for r in results)
 
+    # unrepaired L2 rejects
+    unrepaired_l2 = sum(
+        1 for r in results
+        if r["post_render"]["status"] == "failed"
+        and any("L2 semantic: unsupported claim" in i for i in r["post_render"]["issues"])
+    )
+    hidden_nonpass = sum(
+        1 for r in results
+        if r["post_render"]["status"] == "failed"
+        and any("L2 semantic: hidden truth exposure" in i for i in r["post_render"]["issues"])
+    )
+
     total_time = sum(r.get("turn_wall_time_s", 0) for r in results)
 
     print(f"Turns run:     {len(results)}")
-    print(f"Post-render pass:   {pass_count}")
-    print(f"Post-render repair: {repair_count}")
-    print(f"Errors:        {error_count}")
-    print(f"Fallbacks:     {fallback_count}")
-    print(f"Absence responses:  {absence_response_count}")
-    print(f"L2 checks run:      {l2_checks_run}")
+    print(f"Post-render pass:    {pass_count}")
+    print(f"Post-render repaired: {repaired_count}")
+    print(f"Post-render failed:  {failed_count}")
+    print(f"Errors:         {error_count}")
+    print(f"Fallbacks:      {fallback_count}")
+    print(f"Absence responses:   {absence_response_count}")
+    print(f"L2 checks run:       {l2_checks_run}")
+    print(f"Unrepaired L2 rejects: {unrepaired_l2}")
+    print(f"Hidden truth non-pass: {hidden_nonpass}")
     print(f"Total wall time: {total_time:.2f}s  (avg {total_time/len(results):.2f}s)")
 
     # Acceptance criteria for 20-turn
