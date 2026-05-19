@@ -20,13 +20,14 @@ Compared to the simplified intermediate v0.6.6:
 """
 from __future__ import annotations
 
+import os
 import time
 import traceback
 from statistics import median
 from typing import Any
 
 from metarpg.agentic import refusal_fallback
-from metarpg.agentic.committer import commit_turn
+from metarpg.agentic.committer import commit_transaction, commit_turn
 from metarpg.agentic.feasibility import run_feasibility
 from metarpg.agentic.hard_auditor import run_hard_audit
 from metarpg.agentic.model_client import make_client
@@ -52,6 +53,17 @@ from metarpg.agentic.writer_agent import (
     run_writer,
     safe_mode_for_kind,
 )
+
+# v0.7.0 pipeline imports
+from metarpg.agentic.director_agent import run_director
+from metarpg.agentic.hook_manager import build_narrative_frame
+from metarpg.agentic.narrative_grammar import NarrativeGrammar, load_grammar
+from metarpg.agentic.post_render_checker import check_rendered_prose
+from metarpg.agentic.render_brief import build_render_brief
+from metarpg.agentic.renderer_agent import run_renderer
+from metarpg.agentic.seed_loader import WorldSeed, load_seed
+from metarpg.agentic.transaction import NarrativeFrame, TurnTransaction
+from metarpg.agentic.transaction_validator import validate_transaction
 
 
 _PRIORITY_ORDER = ("bold", "safe_loose", "safe_strict")
@@ -535,3 +547,204 @@ def aggregate_v064_stats(drafts: list[TurnDraft]) -> dict[str, Any]:
         "median_turn_wall_time_s": median(wall_times) if wall_times else 0.0,
         "winner_distribution": winner_distribution,
     }
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0 Transaction-First Pipeline
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SEED_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "data", "seeds", "dnd_ashen_vault_seed.yaml"
+)
+_DEFAULT_GRAMMAR_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "data", "narrative_grammar", "dnd_dungeon_grammar.yaml"
+)
+
+
+def run_agentic_turn_v070(
+    *,
+    world,
+    player_input: str,
+    turn_index: int,
+    run_id: str,
+    seed: WorldSeed | None = None,
+    grammar: NarrativeGrammar | None = None,
+    history: list[str] | None = None,
+    run_logger=None,
+) -> dict[str, Any]:
+    """Run one complete v0.7.0 transaction-first turn.
+
+    Pipeline:
+      1. Story packet + feasibility -> player intent.
+      2. Hook manager -> NarrativeFrame.
+      3. Director (local vLLM) -> TurnTransaction.
+      4. Validator -> accepted / downgraded / rejected.
+      5. Committer -> updated WorldState.
+      6. RenderBrief + Renderer (DeepSeek Flash) -> Chinese prose.
+      7. Post-render checker -> pass / light_repair.
+      8. Primitives: advance_time, tick entities.
+    """
+    if history is None:
+        history = []
+
+    turn_start = time.perf_counter()
+    draft_id = f"{run_id}_turn_{turn_index:03d}"
+
+    if run_logger:
+        run_logger.emit(turn_index, "turn", "turn_start_v070", player_input)
+
+    # Load defaults if caller did not provide seed/grammar
+    if seed is None:
+        seed = load_seed(_DEFAULT_SEED_PATH)
+    if grammar is None:
+        grammar = load_grammar(_DEFAULT_GRAMMAR_PATH)
+
+    # 1. Story packet ---------------------------------------------------------
+    story_packet = build_story_packet(world)
+    if run_logger:
+        run_logger.emit(turn_index, "story_packet", "story_packet_built")
+
+    flash_client = make_client("flash")
+    local_client = make_client("local")
+
+    # Primitive F: offscreen tick
+    tick_offscreen_entities(world, turn_index, client=local_client)
+
+    # 2. Feasibility -> player intent -----------------------------------------
+    feas_result = run_feasibility(story_packet, player_input, client=local_client)
+    player_intent = _feasibility_to_intent(feas_result)
+    if run_logger:
+        run_logger.emit(turn_index, "feasibility", "intent_derived", str(player_intent))
+
+    # 3. NarrativeFrame -------------------------------------------------------
+    narrative_frame = build_narrative_frame(player_input, player_intent, seed, grammar)
+    if run_logger:
+        run_logger.emit(turn_index, "frame", "frame_built", narrative_frame.beat)
+
+    # 4. Director -> TurnTransaction ------------------------------------------
+    tx = run_director(
+        player_input, narrative_frame, story_packet, client=local_client, max_retries=1
+    )
+    # Enrich tx with frame/id so downstream can use them if needed
+    tx.id = draft_id
+    tx.narrative_frame = narrative_frame
+    tx.player_intent = player_intent
+    if run_logger:
+        run_logger.emit(
+            turn_index, "director", "transaction_produced",
+            f"ops={len(tx.operations)} commits={len(tx.commitments)}"
+        )
+
+    # 5. Validator ------------------------------------------------------------
+    val_result = validate_transaction(tx, world, grammar=grammar.__dict__, client=local_client)
+    if run_logger:
+        run_logger.emit(
+            turn_index, "validator", val_result.status,
+            f"issues={len(val_result.issues)} downgrades={len(val_result.downgrades)}"
+        )
+
+    if val_result.status == "rejected":
+        tx = _v070_fallback_tx(player_input, narrative_frame)
+        if run_logger:
+            run_logger.emit(turn_index, "validator", "fallback_activated", "rejected")
+    elif val_result.transaction is not None:
+        tx = val_result.transaction
+
+    # 6. Commit ---------------------------------------------------------------
+    commit_result = commit_transaction(world, tx)
+    if run_logger:
+        run_logger.emit(
+            turn_index, "commit", "commit_success",
+            f"turn={commit_result['turn']}"
+        )
+
+    # 7. RenderBrief ----------------------------------------------------------
+    render_brief = build_render_brief(tx, narrative_frame, world)
+
+    # 8. Renderer (DeepSeek Flash) --------------------------------------------
+    try:
+        prose = run_renderer(render_brief, story_packet, client=flash_client)
+    except Exception as exc:
+        prose = "……"  # Minimal safe fallback
+        if run_logger:
+            run_logger.log_error(turn_index, "renderer", type(exc).__name__, str(exc))
+
+    # 9. Post-render checker --------------------------------------------------
+    check_result = check_rendered_prose(prose, tx, world)
+    if run_logger:
+        run_logger.emit(
+            turn_index, "post_render", check_result["status"],
+            str(check_result["issues"]) if check_result["issues"] else "clean"
+        )
+
+    # 10. Primitives ----------------------------------------------------------
+    advance_time(world)
+    present = set(story_packet.get("scene", {}).get("visible_entities", []))
+    tick_all_present(world, present)
+
+    turn_wall_time = time.perf_counter() - turn_start
+
+    return {
+        "draft_id": draft_id,
+        "player_input": player_input,
+        "narrative_frame": narrative_frame,
+        "transaction": tx,
+        "validation": val_result,
+        "commit": commit_result,
+        "player_output": prose,
+        "post_render": check_result,
+        "committed": True,
+        "error": None,
+        "turn_wall_time_s": turn_wall_time,
+    }
+
+
+def _feasibility_to_intent(feas: FeasibilityReport) -> dict[str, Any]:
+    """Map FeasibilityReport fields to the player_intent dict HookManager expects."""
+    action = feas.stated_action or "ambiguous"
+    # Normalize to a small verb set
+    action_type = "ambiguous"
+    for verb, atype in {
+        "inspect": "inspect", "check": "inspect", "examine": "inspect",
+        "ask": "ask", "question": "ask", "talk": "ask",
+        "help": "help", "aid": "help",
+        "move": "move", "go": "move", "approach": "move", "walk": "move",
+        "take": "take", "pick": "take", "grab": "take",
+        "give": "give", "hand": "give",
+        "wait": "wait", "rest": "wait",
+        "attack": "attack", "fight": "attack", "hit": "attack",
+    }.items():
+        if verb in action.lower():
+            action_type = atype
+            break
+
+    return {
+        "action_type": action_type,
+        "action": action,
+        "targets": feas.stated_targets or [],
+        "props": feas.stated_props or [],
+        "world_response_kind": feas.world_response_kind,
+    }
+
+
+def _v070_fallback_tx(player_input: str, frame: NarrativeFrame) -> TurnTransaction:
+    """Deterministic fallback when validation rejects a transaction."""
+    from metarpg.agentic.transaction import Commitment, Operation
+    return TurnTransaction(
+        player_input=player_input,
+        narrative_frame=frame,
+        operations=[
+            Operation("inner_monologue", {"text": "Player hesitates."}),
+            Operation("add_texture", {"text": "The moment hangs in the air."}),
+        ],
+        commitments=[
+            Commitment(
+                "texture",
+                "A brief pause before action.",
+                operation_index=1,
+            )
+        ],
+        assumptions=[
+            {"source": "fallback", "reason": "Validation rejected original transaction"}
+        ],
+    )
