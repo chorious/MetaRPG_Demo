@@ -30,7 +30,7 @@ canon_facts:
     args: [alen, entrance_hall]
   - id: f_lower_door_sealed
     predicate: sealed
-    args: [lower_vault_door]
+    args: [sealed_lower_door]
   - id: f_ash_on_threshold
     predicate: visible_object
     args: [black_ash, entrance_hall]
@@ -38,18 +38,22 @@ canon_facts:
 locations:
   entrance_hall:
     name: 地城入口厅
+    aliases: [入口厅, 入口, entrance, hall]
     tags: [threshold, cold_stone, torchlit]
     exits: [old_guardroom, flooded_stair, sealed_lower_door]
   old_guardroom:
     name: 旧卫兵室
+    aliases: [卫兵室, 旧卫兵房间, guardroom, old room]
     tags: [abandoned, searchable, rusted]
     exits: [entrance_hall]
   flooded_stair:
     name: 积水阶梯
+    aliases: [积水阶梯, 潮湿阶梯, 阶梯, stairs, flooded stairs]
     tags: [danger, water, echo]
     exits: [entrance_hall, lower_landing]
   sealed_lower_door:
     name: 封闭下层门
+    aliases: [下层门, lower door, lower vault door, closed lower door, 封闭的门, 下层大门]
     tags: [threshold, locked, old_magic]
     exits: [entrance_hall]
 
@@ -57,9 +61,11 @@ entities:
   player:
     kind: player
     visible_name: 你
+    aliases: [你, 玩家, player]
   alen:
     kind: npc
     visible_name: 艾伦
+    aliases: [艾伦, Alen, 阿伦, injured man, 受伤的人, 受伤男子, 吊着胳膊的人]
     surface:
       posture: 靠在入口厅的石柱旁,左臂用布条吊着
       mood: alert, ashamed
@@ -70,14 +76,17 @@ items:
   torch:
     kind: tool
     owner: player
+    aliases: [火把, torch, 火炬, 照明]
     tags: [light, consumable]
   short_sword:
     kind: weapon
     owner: player
+    aliases: [短剑, 短刀, short sword, sword]
     tags: [steel, close_range]
   black_ash:
     kind: clue
     location: entrance_hall
+    aliases: [黑灰, 灰烬, ash, black residue, 灰, 黑色残留物]
     tags: [residue, strange, inspectable]
 
 beliefs:
@@ -118,14 +127,17 @@ relations:
 motifs:
   - id: m_black_ash
     label: 黑灰
+    aliases: [黑灰, 灰烬, ash residue, black residue, 灰迹]
     function: clue, contamination, failed protection
     allowed_variations: [fingerprint, smear, powder, line, bitter smell]
   - id: m_bell
     label: 无声的铃
+    aliases: [铃, 钟声, bell, chime, 无声铃]
     function: threshold, memory, mechanism
     allowed_variations: [dull metal, absent chime, three marks, vibration]
   - id: m_wet_stone
     label: 潮湿石阶
+    aliases: [潮湿, 积水, wet stone, damp, 石阶水汽]
     function: time pressure, depth, danger
     allowed_variations: [echo, cold water, moss, rising line]
 
@@ -134,6 +146,7 @@ active_hooks:
     hook_type: lack
     subject: alen
     object: safety
+    aliases: [艾伦的债务, 艾伦的秘密, alen debt, alen secret, 受伤的人需要帮助]
     tension: 艾伦需要帮助,但他不愿完全信任玩家。
     status: surfaced
     visible_hints: [hint_alen_arm, hint_alen_avoids_lower_door]
@@ -142,14 +155,16 @@ active_hooks:
     hook_type: enigma
     subject: black_ash
     object: lower_vault
+    aliases: [黑灰之谜, ash mystery, black fire, 灰烬的秘密, 黑灰来源]
     tension: 黑灰出现在入口门槛,但来源不明。
     status: surfaced
     visible_hints: [hint_ash_smell, hint_ash_line]
     affordances: [inspect_ash, compare_ash, ask_alen_about_ash]
   - id: hook_lower_door_threshold
     hook_type: threshold
-    subject: lower_vault_door
+    subject: sealed_lower_door
     object: lower_vault
+    aliases: [下层门的秘密, lower door mystery, threshold door, 封印之门, 下层封印]
     tension: 下层门封闭,但它明显不是普通锁。
     status: dormant
     visible_hints: [hint_door_three_marks]

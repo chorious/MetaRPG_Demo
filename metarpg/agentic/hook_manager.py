@@ -17,18 +17,40 @@ from metarpg.agentic.transaction import NarrativeFrame
 
 def build_narrative_frame(
     player_input: str,
-    player_intent: dict[str, Any],
+    resolved_intent: Any,  # ResolvedIntent from reference_resolver
     seed: WorldSeed,
     grammar: NarrativeGrammar,
+    world: Any | None = None,
+    client=None,
 ) -> NarrativeFrame:
-    """Produce a NarrativeFrame for the current turn."""
-    action = player_intent.get("action_type", "ambiguous")
+    """Produce a NarrativeFrame for the current turn.
+
+    v0.7.1: consumes ResolvedIntent (canonical IDs), does NOT re-resolve.
+    v0.7.2: optional L2 SemanticJudge for hook relevance when exact match fails.
+    """
+    # v0.7.1: accept either ResolvedIntent object or legacy dict
+    if isinstance(resolved_intent, dict):
+        action = resolved_intent.get("action_type", "ambiguous")
+        raw_targets = [t.lower() for t in resolved_intent.get("targets", [])]
+        raw_props = [p.lower() for p in resolved_intent.get("props", [])]
+        resolved_targets = [_resolve_through_seed(t, seed) for t in raw_targets]
+        resolved_props = [_resolve_through_seed(p, seed) for p in raw_props]
+    else:
+        action = resolved_intent.action_type if hasattr(resolved_intent, "action_type") else "ambiguous"
+        resolved_targets = [
+            r.canonical_id for r in (resolved_intent.targets if hasattr(resolved_intent, "targets") else [])
+        ]
+        resolved_props = [
+            r.canonical_id for r in (resolved_intent.props if hasattr(resolved_intent, "props") else [])
+        ]
 
     # 1. Select beat
     beat = _select_beat(action, grammar)
 
-    # 2. Match hooks
-    active_hooks = _match_hooks(action, player_intent, seed)
+    # 2. Match hooks using canonical IDs from ResolvedIntent
+    active_hooks, semantic_judgments = _match_hooks_v071(
+        action, resolved_targets, resolved_props, seed, player_input, client
+    )
 
     # 3. Surface dormant hooks
     for hook_id in active_hooks:
@@ -42,13 +64,10 @@ def build_narrative_frame(
         hook = seed.active_hooks.get(hook_id, {})
         candidate_hints.extend(hook.get("visible_hints", []))
 
-    # 5. Select motifs (max 2)
-    motifs = _select_motifs(player_input, active_hooks, seed, grammar)
-
-    # 6. Allowed commitment levels for this beat
+    # 5. Allowed commitment levels for this beat
     allowed_levels = _allowed_commitments_for_beat(beat, grammar)
 
-    # 7. Forbidden moves
+    # 6. Forbidden moves
     forbidden = ["npc_inner_monologue"]
     if any(
         seed.active_hooks.get(hid, {}).get("hook_type") == "threshold"
@@ -59,11 +78,15 @@ def build_narrative_frame(
     return NarrativeFrame(
         beat=beat,
         active_hooks=active_hooks,
-        candidate_hints=list(dict.fromkeys(candidate_hints)),  # preserve order, dedupe
-        motifs_to_use=motifs,
+        candidate_hints=list(dict.fromkeys(candidate_hints)),
+        motifs_to_use=[],  # runner populates via schedule_motifs
         dramatic_function=_dramatic_function(beat, active_hooks),
         allowed_commitment_levels=allowed_levels,
         forbidden_moves=forbidden,
+        resolved_targets=resolved_targets,
+        resolved_props=resolved_props,
+        unresolved_mentions=resolved_intent.unresolved if hasattr(resolved_intent, "unresolved") else [],
+        semantic_judgments=semantic_judgments,
     )
 
 
@@ -75,9 +98,11 @@ def build_narrative_frame(
 _ACTION_TO_BEAT: dict[str, str] = {
     "inspect": "inspection",
     "ask": "social_pressure",
+    "speak": "social_pressure",
     "help": "social_pressure",
     "move": "threshold_crossing",
     "take": "inspection",
+    "interact": "inspection",
     "give": "social_pressure",
     "wait": "aftermath",
     "attack": "complication",
@@ -97,103 +122,103 @@ def _select_beat(action: str, grammar: NarrativeGrammar) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _match_hooks(action: str, player_intent: dict[str, Any], seed: WorldSeed) -> list[str]:
-    targets = [t.lower() for t in player_intent.get("targets", [])]
-    props = [p.lower() for p in player_intent.get("props", [])]
-    search_terms = set(targets + props)
+def _resolve_through_seed(raw: str, seed: WorldSeed) -> str:
+    """Try to resolve a raw mention to canonical ID via seed aliases."""
+    if not raw:
+        return raw
+    # Direct hit on canonical ID
+    if raw in seed.locations or raw in seed.entities or raw in seed.items:
+        return raw
+    # Try alias resolution (with underscore-to-space normalization)
+    for variant in (raw, raw.replace("_", " ")):
+        results = seed.resolve_alias(variant)
+        if results:
+            return results[0][0]  # canonical_id
+    return raw
+
+
+def _match_hooks_v071(
+    action: str,
+    resolved_targets: list[str],
+    resolved_props: list[str],
+    seed: WorldSeed,
+    player_input: str = "",
+    client=None,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Match hooks using canonical IDs from ResolvedIntent (v0.7.2).
+
+    Fast path: exact subject/object match by canonical ID.
+    Slow path (v0.7.2): L2 SemanticJudge for hooks that fail exact match.
+    """
+    search_ids = set(resolved_targets + resolved_props)
     matched: list[str] = []
+    unmatched_hooks: list[dict[str, Any]] = []
 
     for hook_id, hook in seed.active_hooks.items():
-        subject = hook.get("subject", "").lower()
-        hook_obj = hook.get("object", "").lower()
+        subject = hook.get("subject", "")
+        hook_obj = hook.get("object", "")
+        hook_type = hook.get("hook_type", "")
 
-        # Direct subject/object match
-        if subject in search_terms or hook_obj in search_terms:
+        # Direct subject/object match by canonical ID
+        if subject in search_ids or hook_obj in search_ids:
             matched.append(hook_id)
             continue
 
         # Inspect action on items/locations
-        if action == "inspect" and subject in search_terms:
+        if action in ("inspect", "move") and subject in search_ids:
             matched.append(hook_id)
             continue
 
         # NPC interaction matches lack/debt hooks
-        if action in ("ask", "help") and hook.get("hook_type") in ("lack", "debt"):
-            if subject in search_terms:
+        if action in ("ask", "help", "speak") and hook_type in ("lack", "debt"):
+            if subject in search_ids:
                 matched.append(hook_id)
                 continue
 
-        # Move action: match threshold hooks by location fuzz
-        if action == "move" and hook.get("hook_type") == "threshold":
-            for term in search_terms:
-                if _fuzzy_match(term, subject) or _fuzzy_match(term, hook_obj):
-                    matched.append(hook_id)
-                    break
-            else:
-                # Also check if term is a known location related to the hook
-                for term in search_terms:
-                    if _location_related_to_hook(term, hook, seed):
-                        matched.append(hook_id)
-                        break
-            continue
+        # Move action: match threshold hooks by location
+        if action == "move" and hook_type == "threshold":
+            if subject in search_ids or hook_obj in search_ids:
+                matched.append(hook_id)
+                continue
 
-    return matched
+        # v0.7.2: collect unmatched hooks for L2 semantic judge
+        unmatched_hooks.append({"id": hook_id, **hook})
 
+    semantic_judgments: list[dict[str, Any]] = []
 
-def _fuzzy_match(a: str, b: str) -> bool:
-    """Simple overlap: one contains the other or they share a significant token."""
-    a_lo = a.lower()
-    b_lo = b.lower()
-    if a_lo in b_lo or b_lo in a_lo:
-        return True
-    # token overlap for compound names like "lower_door" vs "lower_vault_door"
-    a_tokens = set(a_lo.split("_"))
-    b_tokens = set(b_lo.split("_"))
-    return len(a_tokens & b_tokens) >= 1
+    # L2 fallback: semantic judge for unmatched hooks
+    if unmatched_hooks and client is not None and matched:
+        try:
+            from metarpg.agentic import semantic_judge
+            player_intent = {
+                "action_type": action,
+                "targets": resolved_targets,
+                "props": resolved_props,
+                "player_input": player_input,
+            }
+            recent_events = []
+            if hasattr(seed, "_recent_events"):
+                recent_events = seed._recent_events
+            judgments = semantic_judge.judge_hook_relevance(
+                player_intent=player_intent,
+                active_hooks=unmatched_hooks,
+                recent_events=recent_events,
+                client=client,
+            )
+            for j in judgments:
+                semantic_judgments.append({
+                    "hook_id": j.category,
+                    "verdict": j.verdict,
+                    "evidence": j.evidence,
+                    "confidence": j.confidence,
+                })
+                if j.verdict == "pass":
+                    matched.append(j.category)
+        except Exception:
+            # L2 failure is non-blocking; exact-match results are preserved
+            pass
 
-
-def _location_related_to_hook(term: str, hook: dict[str, Any], seed: WorldSeed) -> bool:
-    """Check if term is a location whose name overlaps with hook subject/object."""
-    for loc_id in seed.locations:
-        if _fuzzy_match(term, loc_id):
-            subj = hook.get("subject", "")
-            obj = hook.get("object", "")
-            if _fuzzy_match(loc_id, subj) or _fuzzy_match(loc_id, obj):
-                return True
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Motif selection
-# ---------------------------------------------------------------------------
-
-
-def _select_motifs(
-    player_input: str,
-    active_hooks: list[str],
-    seed: WorldSeed,
-    grammar: NarrativeGrammar,
-) -> list[str]:
-    pi_lower = player_input.lower()
-    matched: list[str] = []
-
-    # Match by label in player input
-    for motif_id, motif in seed.motifs.items():
-        label = motif.get("label", "").lower()
-        if label in pi_lower:
-            matched.append(motif_id)
-
-    # Match by hook tension text
-    for hook_id in active_hooks:
-        hook = seed.active_hooks.get(hook_id, {})
-        tension = hook.get("tension", "").lower()
-        for motif_id, motif in seed.motifs.items():
-            label = motif.get("label", "").lower()
-            if label in tension and motif_id not in matched:
-                matched.append(motif_id)
-
-    max_motifs = grammar.motif_rules.get("max_motifs_per_turn", 2)
-    return matched[:max_motifs]
+    return matched, semantic_judgments
 
 
 # ---------------------------------------------------------------------------

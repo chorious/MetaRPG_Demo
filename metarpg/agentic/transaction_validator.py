@@ -48,7 +48,7 @@ def validate_transaction(
     # 2. Commitment-level checks + downgrade paths
     for c in tx.commitments:
         c_issues, c_downgrades, accepted = _check_commitment(
-            c, world, grammar, client
+            c, tx.operations, world, grammar, client
         )
         issues.extend(c_issues)
         downgrades.extend(c_downgrades)
@@ -166,11 +166,24 @@ def _check_operation(op: Operation, index: int, world: WorldState) -> list[Valid
                 )
             )
 
+    elif kind == "mark_hook_status":
+        hid = params.get("hook_id")
+        if hid and not _hook_exists(hid, world):
+            issues.append(
+                ValidationIssue(
+                    severity="hard_fail",
+                    type="unknown_hook_id",
+                    reason=f"Hook {hid!r} does not exist in world seed",
+                    operation_index=index,
+                )
+            )
+
     return issues
 
 
 def _check_commitment(
     c: Commitment,
+    operations: list[Operation],
     world: WorldState,
     grammar: dict[str, Any] | None,
     client,  # noqa: ARG001 — reserved for semantic downgrader
@@ -192,12 +205,16 @@ def _check_commitment(
         return issues, downgrades, None
 
     # Deterministic downgrade: canon without evidence → utterance
-    if c.level == "canon" and not _has_hard_evidence(c, world):
+    if c.level == "canon" and not _has_hard_evidence(c, operations, world):
         downgrades.append(
             DowngradeRecord(
                 original_commitment="canon",
                 new_commitment="utterance",
-                reason="Insufficient hard evidence for canonization",
+                reason=(
+                    "canon → utterance: Director generated canon without hard evidence. "
+                    "Use 'hint' for observations, 'belief_evidence' for NPC reactions, "
+                    "and 'canon' only for committed state changes (move, transfer, hook status)."
+                ),
                 operation_index=c.operation_index,
             )
         )
@@ -311,7 +328,14 @@ def _entity_present(entity: str | None, world: WorldState) -> bool:
 def _location_exists(location: str | None, world: WorldState) -> bool:
     if location is None:
         return False
+    # v0.7.1: Validator ONLY eats canonical IDs — no alias resolution here.
     return location in world.locations
+
+
+def _hook_exists(hook_id: str | None, world: WorldState) -> bool:
+    if hook_id is None:
+        return False
+    return hook_id in getattr(world, "_hook_status", {})
 
 
 def _relation_delta_in_bounds(delta: float) -> bool:
@@ -339,8 +363,22 @@ def _reveals_hidden_truth(commitment: Commitment, world: WorldState) -> bool:
     return False
 
 
-def _has_hard_evidence(commitment: Commitment, world: WorldState) -> bool:
-    """Placeholder: in MVP, only explicit canon_facts count as hard evidence."""
+def _has_hard_evidence(
+    commitment: Commitment, operations: list[Operation], world: WorldState
+) -> bool:
+    """Check if a canon commitment has hard evidence.
+
+    v0.7.2: operation-aware check — move_player, transfer_item, mark_hook_status
+    are treated as hard evidence for their linked commitment.
+    """
+    # Operation-linked evidence
+    op_idx = commitment.operation_index
+    if 0 <= op_idx < len(operations):
+        op = operations[op_idx]
+        if op.kind in ("move_player", "transfer_item", "mark_hook_status"):
+            return True
+
+    # Fallback: description substring match against world facts
     desc_lower = commitment.description.lower()
     for fact in world.facts:
         if desc_lower in str(fact).lower():

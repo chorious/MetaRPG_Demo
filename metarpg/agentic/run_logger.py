@@ -105,6 +105,19 @@ class RunLogger:
             json.dump(scorecard, f, ensure_ascii=False, indent=2)
         return path
 
+    def emit_artifact(
+        self, turn_index: int, name: str, data: dict[str, Any]
+    ) -> Path:
+        """Persist a named turn artifact for post-hoc audit.
+
+        Artifacts: resolved_intent, narrative_frame, transaction_raw,
+        transaction_validated, render_brief, semantic_judgments, post_render.
+        """
+        path = self.run_dir / f"artifact_{turn_index:03d}_{name}.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return path
+
     def close(
         self,
         turns_attempted: int,

@@ -28,6 +28,13 @@ class NarrativeFrame:
     dramatic_function: str = ""
     allowed_commitment_levels: list[str] = field(default_factory=list)
     forbidden_moves: list[str] = field(default_factory=list)
+    # v0.7.1: L1 ReferenceResolver outputs, consumed by downstream stages
+    resolved_targets: list[dict[str, Any]] = field(default_factory=list)
+    resolved_props: list[dict[str, Any]] = field(default_factory=list)
+    unresolved_mentions: list[str] = field(default_factory=list)
+    canonical_id_whitelist: dict[str, list[str]] = field(default_factory=dict)
+    # v0.7.2: L2 SemanticJudge hook-relevance results
+    semantic_judgments: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

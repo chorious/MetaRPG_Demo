@@ -5,6 +5,11 @@ Scope:
   NPC inner monologue, debug/system terms.
 - Must NOT inspect: hook reasonableness, relation_delta magnitude,
   NPC speech patch support, item existence (handled by Validator).
+
+v0.7.1:
+- L3 keyword scan always runs (fast, deterministic).
+- L2 SemanticJudge runs only on risk turns (hidden truth / hook change / canon).
+- Call budget: L2 skipped if client unavailable; never blocks pipeline.
 """
 from __future__ import annotations
 
@@ -12,6 +17,16 @@ from typing import Any
 
 from metarpg.agentic.transaction import TurnTransaction
 from metarpg.models import WorldState
+
+# v0.7.1: optional L2 semantic judge (lazy import to avoid circular deps)
+_judge_mod = None
+
+
+def _get_semantic_judge():
+    global _judge_mod
+    if _judge_mod is None:
+        from metarpg.agentic import semantic_judge as _judge_mod
+    return _judge_mod
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +38,7 @@ def check_rendered_prose(
     prose: str,
     tx: TurnTransaction,
     world: WorldState,
-    client=None,  # noqa: ARG001 — reserved for optional local vLLM NLI check
+    client=None,
 ) -> dict[str, Any]:
     """Check rendered prose for violations outside the validated transaction.
 
@@ -32,6 +47,7 @@ def check_rendered_prose(
     """
     issues: list[str] = []
 
+    # --- L3: Deterministic keyword scan (always runs) ---
     # 1. Hidden truth alias leaks
     for alias in _collect_hidden_aliases(world):
         if alias.lower() in prose.lower():
@@ -50,14 +66,89 @@ def check_rendered_prose(
     for fact in uncommitted:
         issues.append(f"Uncommitted world fact: {fact!r}")
 
+    # --- L2: Semantic Judge (risk-turn only, Call Budget) ---
+    semantic_judgments: list[dict] = []
+    if _is_risk_turn(tx) and client is not None:
+        try:
+            judge = _get_semantic_judge()
+            # Hidden truth exposure check
+            hidden_truths = [
+                {"id": k, "statement": v.get("statement", "")}
+                for k, v in getattr(world, "hidden_truths", {}).items()
+                if isinstance(v, dict)
+            ]
+            ht_judgment = judge.judge_hidden_truth_exposure(
+                text=prose,
+                hidden_truths=hidden_truths,
+                client=client,
+            )
+            semantic_judgments.append({
+                "check": "hidden_truth_exposure",
+                "verdict": ht_judgment.verdict,
+                "category": ht_judgment.category,
+                "evidence": ht_judgment.evidence,
+            })
+            if ht_judgment.verdict in ("downgrade", "reject"):
+                issues.append(
+                    f"L2 semantic: hidden truth exposure ({ht_judgment.category}): "
+                    f"{ht_judgment.evidence}"
+                )
+
+            # Render claim support check
+            tx_summary = {
+                "operations": [op.kind for op in tx.operations],
+                "commitments": [c.level for c in tx.commitments],
+            }
+            world_facts = [str(f) for f in getattr(world, "facts", [])]
+            rc_judgment = judge.judge_render_claim_support(
+                prose=prose,
+                transaction_summary=tx_summary,
+                world_facts=world_facts,
+                client=client,
+            )
+            semantic_judgments.append({
+                "check": "render_claim_support",
+                "verdict": rc_judgment.verdict,
+                "category": rc_judgment.category,
+                "evidence": rc_judgment.evidence,
+            })
+            if rc_judgment.verdict == "reject":
+                issues.append(
+                    f"L2 semantic: unsupported claim ({rc_judgment.category}): "
+                    f"{rc_judgment.evidence}"
+                )
+        except Exception as exc:
+            # L2 failure is non-blocking; L3 already ran
+            semantic_judgments.append({"check": "error", "error": str(exc)})
+
     if issues:
-        return {"status": "light_repair", "issues": issues}
-    return {"status": "pass", "issues": []}
+        return {"status": "light_repair", "issues": issues, "semantic_judgments": semantic_judgments}
+    return {"status": "pass", "issues": [], "semantic_judgments": semantic_judgments}
 
 
 # ---------------------------------------------------------------------------
 # Deterministic scanners
 # ---------------------------------------------------------------------------
+
+
+def _is_risk_turn(tx: TurnTransaction) -> bool:
+    """Risk turn = involves hidden truth exposure or canon commitment.
+
+    Call Budget: L2 semantic check only runs on true risk turns (~20-30%).
+    v0.7.2 tightened: mark_hook_status alone is not enough; must be canon
+    or a hook status change to a terminal state (resolved/revealed).
+    """
+    # Terminal hook status changes (most likely to expose hidden truth)
+    for op in tx.operations:
+        if op.kind == "mark_hook_status":
+            status = op.params.get("status", "")
+            if status in ("resolved", "revealed", "completed"):
+                return True
+    # Canon commitments are strong claims that need claim-support checking
+    for c in tx.commitments:
+        if c.level == "canon":
+            return True
+    return False
 
 
 def _collect_hidden_aliases(world: WorldState) -> list[str]:

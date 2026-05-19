@@ -60,3 +60,63 @@ def test_load_grammar_render_rules():
     grammar = load_grammar(GRAMMAR_PATH)
     assert grammar.render_rules.get("prose_language") == "zh"
     assert grammar.render_rules.get("npc_inner_monologue_forbidden") is True
+
+
+# ---------------------------------------------------------------------------
+# v0.7.1 — Alias resolution tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_alias_exact_match():
+    seed = load_seed(SEED_PATH)
+    results = seed.resolve_alias("下层门")
+    assert len(results) >= 1
+    cids = {r[0] for r in results}
+    assert "sealed_lower_door" in cids
+
+
+def test_resolve_alias_item():
+    seed = load_seed(SEED_PATH)
+    results = seed.resolve_alias("黑灰")
+    assert len(results) >= 1
+    kinds = {r[1] for r in results}
+    assert "item" in kinds or "motif" in kinds
+
+
+def test_resolve_alias_entity():
+    seed = load_seed(SEED_PATH)
+    results = seed.resolve_alias("艾伦")
+    assert len(results) >= 1
+    cids = {r[0] for r in results}
+    assert "alen" in cids
+
+
+def test_resolve_alias_containment_match():
+    """Mention containing a known alias should resolve with lower confidence."""
+    seed = load_seed(SEED_PATH)
+    results = seed.resolve_alias("我去看那扇封闭的下层门")
+    assert len(results) >= 1
+    cids = {r[0] for r in results}
+    assert "sealed_lower_door" in cids
+    # containment matches get 0.85 confidence
+    assert any(conf == 0.85 for _, _, conf in results)
+
+
+def test_resolve_alias_no_match():
+    seed = load_seed(SEED_PATH)
+    results = seed.resolve_alias("完全不存在的词")
+    assert results == []
+
+
+def test_get_aliases_for():
+    seed = load_seed(SEED_PATH)
+    aliases = seed.get_aliases_for("sealed_lower_door")
+    assert any("下层门" in a for a in aliases)
+
+
+def test_alias_index_built_on_load():
+    seed = load_seed(SEED_PATH)
+    assert seed._alias_index  # non-empty after load_seed
+    assert "下层门" in seed._alias_index
+    assert "黑灰" in seed._alias_index
+    assert "艾伦" in seed._alias_index

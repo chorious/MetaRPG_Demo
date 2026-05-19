@@ -12,7 +12,7 @@ def _make_world() -> WorldState:
         Fact("at", ("alen", "entrance_hall")),
         Fact("has", ("player", "torch")),
         Fact("has", ("player", "short_sword")),
-        Fact("sealed", ("lower_vault_door",)),
+        Fact("sealed", ("sealed_lower_door",)),
     }
     world.locations = {"entrance_hall", "old_guardroom", "flooded_stair", "sealed_lower_door"}
     world.npcs = {"alen"}

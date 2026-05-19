@@ -179,6 +179,11 @@ def main() -> int:
         1 for r in results
         if any(a.get("source") == "fallback" for a in r["transaction"].assumptions)
     )
+    absence_response_count = sum(
+        1 for r in results
+        if any(a.get("source") == "absence_response" for a in r["transaction"].assumptions)
+    )
+    l2_checks_run = sum(r.get("l2_checks_run", 0) for r in results)
 
     total_time = sum(r.get("turn_wall_time_s", 0) for r in results)
 
@@ -187,6 +192,8 @@ def main() -> int:
     print(f"Post-render repair: {repair_count}")
     print(f"Errors:        {error_count}")
     print(f"Fallbacks:     {fallback_count}")
+    print(f"Absence responses:  {absence_response_count}")
+    print(f"L2 checks run:      {l2_checks_run}")
     print(f"Total wall time: {total_time:.2f}s  (avg {total_time/len(results):.2f}s)")
 
     # Acceptance criteria for 20-turn

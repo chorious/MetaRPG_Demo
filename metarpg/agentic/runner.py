@@ -57,8 +57,10 @@ from metarpg.agentic.writer_agent import (
 # v0.7.0 pipeline imports
 from metarpg.agentic.director_agent import run_director
 from metarpg.agentic.hook_manager import build_narrative_frame
+from metarpg.agentic.motif_scheduler import schedule_motifs, update_motif_ledger
 from metarpg.agentic.narrative_grammar import NarrativeGrammar, load_grammar
 from metarpg.agentic.post_render_checker import check_rendered_prose
+from metarpg.agentic.reference_resolver import resolve_references
 from metarpg.agentic.render_brief import build_render_brief
 from metarpg.agentic.renderer_agent import run_renderer
 from metarpg.agentic.seed_loader import WorldSeed, load_seed
@@ -307,6 +309,18 @@ def run_agentic_turn(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _to_dict(obj: Any) -> Any:
+    """Serialize dataclass instances to plain dicts for JSON logging."""
+    from dataclasses import asdict, is_dataclass
+    if is_dataclass(obj):
+        return asdict(obj)
+    if isinstance(obj, list):
+        return [_to_dict(i) for i in obj]
+    if isinstance(obj, dict):
+        return {k: _to_dict(v) for k, v in obj.items()}
+    return obj
 
 
 def _fallback_voice(player_input: str) -> list[str]:
@@ -612,28 +626,132 @@ def run_agentic_turn_v070(
 
     # 2. Feasibility -> player intent -----------------------------------------
     feas_result = run_feasibility(story_packet, player_input, client=local_client)
-    player_intent = _feasibility_to_intent(feas_result, player_input)
     if run_logger:
-        run_logger.emit(turn_index, "feasibility", "intent_derived", str(player_intent))
+        run_logger.emit(turn_index, "feasibility", "feasibility_complete")
 
-    # 3. NarrativeFrame -------------------------------------------------------
-    narrative_frame = build_narrative_frame(player_input, player_intent, seed, grammar)
-    if run_logger:
-        run_logger.emit(turn_index, "frame", "frame_built", narrative_frame.beat)
-
-    # 4. Director -> TurnTransaction ------------------------------------------
-    tx = run_director(
-        player_input, narrative_frame, story_packet, client=local_client, max_retries=1
+    # v0.7.2: L1 Reference Resolution — known_universe + available_universe
+    aliases_map = _build_aliases_map(seed)
+    scene = story_packet.get("scene", {})
+    player_ctx = story_packet.get("player_context", {})
+    player_location = scene.get("location", "")
+    reachable_locs = [
+        loc for loc in seed.locations
+        if _location_reachable(loc, player_location, seed)
+    ]
+    visible_objs = scene.get("visible_objects", [])
+    last_targets = getattr(world, "_last_resolved_targets", [])
+    resolved_intent = resolve_references(
+        player_input=player_input,
+        known_entities=list(seed.entities.keys()),
+        known_items=list(seed.items.keys()),
+        known_locations=list(seed.locations.keys()),
+        known_hooks=list(seed.active_hooks.keys()),
+        known_motifs=list(seed.motifs.keys()),
+        available_entities=scene.get("visible_entities", []),
+        available_items=[i for i in seed.items if i in visible_objs],
+        available_locations=reachable_locs,
+        available_hooks=list(seed.active_hooks.keys()),
+        available_motifs=list(seed.motifs.keys()),
+        aliases_map=aliases_map,
+        client=local_client,
+        last_targets=last_targets,
+        player_location=player_location,
     )
-    # Enrich tx with frame/id so downstream can use them if needed
-    tx.id = draft_id
-    tx.narrative_frame = narrative_frame
-    tx.player_intent = player_intent
+    # Store for next turn's coreference resolution
+    world._last_resolved_targets = list(resolved_intent.targets) + list(resolved_intent.props)
     if run_logger:
         run_logger.emit(
-            turn_index, "director", "transaction_produced",
-            f"ops={len(tx.operations)} commits={len(tx.commitments)}"
+            turn_index, "reference_resolver", "intent_resolved",
+            f"targets={[r.canonical_id for r in resolved_intent.targets]} "
+            f"props={[r.canonical_id for r in resolved_intent.props]}"
         )
+        run_logger.emit_artifact(
+            turn_index, "resolved_intent",
+            _to_dict(resolved_intent),
+        )
+
+    # Build canonical ID whitelist for Director
+    canonical_id_whitelist = {
+        "reachable_location_ids": reachable_locs,
+        "visible_entity_ids": scene.get("visible_entities", []),
+        "active_hook_ids": list(seed.active_hooks.keys()),
+        "allowed_motif_ids": list(seed.motifs.keys()),
+    }
+
+    # 3. NarrativeFrame -------------------------------------------------------
+    narrative_frame = build_narrative_frame(
+        player_input, resolved_intent, seed, grammar, world, client=local_client
+    )
+    narrative_frame.canonical_id_whitelist = canonical_id_whitelist
+    narrative_frame.resolved_targets = [
+        {"mention": r.mention, "canonical_id": r.canonical_id, "kind": r.kind, "confidence": r.confidence, "available": r.available}
+        for r in resolved_intent.targets
+    ]
+    narrative_frame.resolved_props = [
+        {"mention": r.mention, "canonical_id": r.canonical_id, "kind": r.kind, "confidence": r.confidence, "available": r.available}
+        for r in resolved_intent.props
+    ]
+    narrative_frame.unresolved_mentions = resolved_intent.unresolved
+
+    # v0.7.1: Motif scheduling
+    motif_schedule = schedule_motifs(
+        beat=narrative_frame.beat,
+        active_hooks=narrative_frame.active_hooks,
+        seed=seed,
+        grammar=grammar,
+        motif_ledger=getattr(world, "motif_ledger", {}),
+        current_turn=getattr(world, "turn", 0),
+    )
+    narrative_frame.motifs_to_use = motif_schedule.motifs_to_use
+
+    if run_logger:
+        run_logger.emit_artifact(
+            turn_index, "motif_schedule",
+            {
+                "motifs_to_use": motif_schedule.motifs_to_use,
+                "debug": motif_schedule.debug,
+            },
+        )
+        run_logger.emit(turn_index, "frame", "frame_built", narrative_frame.beat)
+        run_logger.emit_artifact(
+            turn_index, "narrative_frame",
+            _to_dict(narrative_frame),
+        )
+
+    # v0.7.2: Absence Response — known-but-unavailable target + interact action
+    absent_refs = [r for r in resolved_intent.targets if not r.available]
+    if absent_refs and resolved_intent.action_type in ("ask", "speak", "interact"):
+        tx = _build_absence_response(player_input, narrative_frame, absent_refs, draft_id)
+        if run_logger:
+            run_logger.emit(
+                turn_index, "director", "absence_response",
+                f"absent={','.join(r.canonical_id for r in absent_refs)}"
+            )
+            run_logger.emit_artifact(
+                turn_index, "transaction_raw",
+                {"note": "absence_response (no Director call)", "parsed": _to_dict(tx)},
+            )
+    else:
+        # 4. Director -> TurnTransaction --------------------------------------
+        tx = run_director(
+            player_input, narrative_frame, story_packet, client=local_client, max_retries=1
+        )
+        # Enrich tx with frame/id so downstream can use them if needed
+        tx.id = draft_id
+        tx.narrative_frame = narrative_frame
+        tx.player_intent = {"action_type": resolved_intent.action_type, "unresolved": resolved_intent.unresolved}
+        if run_logger:
+            run_logger.emit(
+                turn_index, "director", "transaction_produced",
+                f"ops={len(tx.operations)} commits={len(tx.commitments)}"
+            )
+            run_logger.emit_artifact(
+                turn_index, "transaction_raw",
+                {
+                    "director_raw_output": getattr(tx, "_director_raw", None),
+                    "parsed": _to_dict(tx),
+                },
+            )
 
     # 5. Validator ------------------------------------------------------------
     val_result = validate_transaction(tx, world, grammar=grammar.__dict__, client=local_client)
@@ -641,6 +759,15 @@ def run_agentic_turn_v070(
         run_logger.emit(
             turn_index, "validator", val_result.status,
             f"issues={len(val_result.issues)} downgrades={len(val_result.downgrades)}"
+        )
+        run_logger.emit_artifact(
+            turn_index, "transaction_validated",
+            {
+                "status": val_result.status,
+                "transaction": _to_dict(tx),
+                "issues": _to_dict(val_result.issues),
+                "downgrades": _to_dict(val_result.downgrades),
+            },
         )
 
     if val_result.status == "rejected":
@@ -658,8 +785,21 @@ def run_agentic_turn_v070(
             f"turn={commit_result['turn']}"
         )
 
+    # v0.7.1: update motif ledger
+    if not hasattr(world, "motif_ledger"):
+        world.motif_ledger = {}
+    if motif_schedule.motifs_to_use:
+        world.motif_ledger = update_motif_ledger(
+            world.motif_ledger, motif_schedule, world.turn
+        )
+
     # 7. RenderBrief ----------------------------------------------------------
     render_brief = build_render_brief(tx, narrative_frame, world)
+    if run_logger:
+        run_logger.emit_artifact(
+            turn_index, "render_brief",
+            _to_dict(render_brief),
+        )
 
     # 8. Renderer (DeepSeek Flash) --------------------------------------------
     try:
@@ -670,11 +810,22 @@ def run_agentic_turn_v070(
             run_logger.log_error(turn_index, "renderer", type(exc).__name__, str(exc))
 
     # 9. Post-render checker --------------------------------------------------
-    check_result = check_rendered_prose(prose, tx, world)
+    check_result = check_rendered_prose(prose, tx, world, client=local_client)
     if run_logger:
         run_logger.emit(
             turn_index, "post_render", check_result["status"],
             str(check_result["issues"]) if check_result["issues"] else "clean"
+        )
+        run_logger.emit_artifact(
+            turn_index, "post_render",
+            dict(check_result),
+        )
+        run_logger.emit_artifact(
+            turn_index, "semantic_judgments",
+            {
+                "judgments": check_result.get("semantic_judgments", []),
+                "l2_ran": bool(check_result.get("semantic_judgments")),
+            },
         )
 
     # 10. Primitives ----------------------------------------------------------
@@ -683,6 +834,8 @@ def run_agentic_turn_v070(
     tick_all_present(world, present)
 
     turn_wall_time = time.perf_counter() - turn_start
+
+    l2_checks_run = 1 if check_result.get("semantic_judgments") else 0
 
     return {
         "draft_id": draft_id,
@@ -696,6 +849,7 @@ def run_agentic_turn_v070(
         "committed": True,
         "error": None,
         "turn_wall_time_s": turn_wall_time,
+        "l2_checks_run": l2_checks_run,
     }
 
 
@@ -746,6 +900,66 @@ def _feasibility_to_intent(feas: FeasibilityReport, player_input: str = "") -> d
         "props": feas.stated_props or [],
         "world_response_kind": feas.world_response_kind,
     }
+
+
+def _build_aliases_map(seed: WorldSeed) -> dict[str, list[str]]:
+    """Build a flat map of canonical_id -> alias phrases from seed."""
+    aliases_map: dict[str, list[str]] = {}
+    for cid, loc in seed.locations.items():
+        aliases_map[cid] = loc.get("aliases", [])
+    for cid, ent in seed.entities.items():
+        aliases_map[cid] = ent.get("aliases", [])
+    for cid, item in seed.items.items():
+        aliases_map[cid] = item.get("aliases", [])
+    for cid, hook in seed.active_hooks.items():
+        aliases_map[cid] = hook.get("aliases", [])
+    for cid, motif in seed.motifs.items():
+        aliases_map[cid] = motif.get("aliases", [])
+    return aliases_map
+
+
+def _location_reachable(loc_id: str, player_loc: str, seed: WorldSeed) -> bool:
+    """Check if a location is reachable from the player's current location."""
+    if loc_id == player_loc:
+        return True
+    current = seed.locations.get(player_loc, {})
+    exits = current.get("exits", [])
+    return loc_id in exits
+
+
+def _build_absence_response(
+    player_input: str,
+    frame: NarrativeFrame,
+    absent_refs: list,
+    draft_id: str = "",
+) -> TurnTransaction:
+    """Deterministic transaction when player refers to a known-but-absent target.
+
+    v0.7.2: Skips Director; output still flows through RenderBrief + Flash Renderer.
+    """
+    from metarpg.agentic.transaction import Commitment, Operation
+
+    names = ", ".join(r.canonical_id.replace("_", " ") for r in absent_refs)
+    desc = f"You look around, but {names} is not here."
+
+    return TurnTransaction(
+        id=draft_id,
+        player_input=player_input,
+        narrative_frame=frame,
+        operations=[
+            Operation("observe_reaction", {"entity": "player", "description": desc}),
+            Operation("add_event", {"summary": f"Player attempts to interact with absent target: {names}"}),
+        ],
+        commitments=[
+            Commitment("texture", f"Moment of confusion — {names} absent.", operation_index=0),
+        ],
+        assumptions=[
+            {
+                "source": "absence_response",
+                "reason": f"{','.join(r.canonical_id for r in absent_refs)} not in visible_entities",
+            }
+        ],
+    )
 
 
 def _v070_fallback_tx(player_input: str, frame: NarrativeFrame) -> TurnTransaction:

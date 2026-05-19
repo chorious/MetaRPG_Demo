@@ -96,7 +96,7 @@ def _mock_feas_turn2(*args, **kwargs):
 def _mock_feas_turn3(*args, **kwargs):
     return FeasibilityReport(
         stated_action="approach lower vault door",
-        stated_targets=["lower_vault_door"],
+        stated_targets=["sealed_lower_door"],
         stated_props=[],
         world_response_kind="accept",
     )

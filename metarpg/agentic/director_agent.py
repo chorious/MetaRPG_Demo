@@ -50,6 +50,8 @@ def run_director(
             raw = client.chat_json(messages, temperature=0.4)
             last_raw = raw
             tx = _parse_transaction(raw)
+            tx._director_raw = raw
+            _coerce_ids(tx, narrative_frame)
             _validate_structure(tx, narrative_frame)
             return tx
         except Exception as exc:
@@ -79,6 +81,27 @@ def run_director(
 # ---------------------------------------------------------------------------
 
 
+def _build_resolved_intent_payload(frame: NarrativeFrame) -> dict[str, Any]:
+    """Build resolved_intent payload, handling both dict and str list formats."""
+    if not (frame.resolved_targets or frame.resolved_props or frame.unresolved_mentions):
+        return {}
+    # v0.7.1 runner path: resolved_targets is list[dict]
+    if frame.resolved_targets and isinstance(frame.resolved_targets[0], dict):
+        return {
+            "action_type": frame.resolved_targets[0].get("kind", ""),
+            "targets": frame.resolved_targets,
+            "props": frame.resolved_props,
+            "unresolved": frame.unresolved_mentions,
+        }
+    # Legacy test path: resolved_targets is list[str]
+    return {
+        "action_type": "",
+        "targets": [{"canonical_id": t, "kind": "unknown"} for t in frame.resolved_targets],
+        "props": [{"canonical_id": p, "kind": "unknown"} for p in frame.resolved_props],
+        "unresolved": frame.unresolved_mentions,
+    }
+
+
 def _build_system_prompt(frame: NarrativeFrame) -> str:
     return (
         "You are the Director of a narrative RPG engine.\n"
@@ -94,6 +117,21 @@ def _build_system_prompt(frame: NarrativeFrame) -> str:
         "add_event, add_texture, inner_monologue.\n"
         f"6. Allowed commitment levels for this turn: {frame.allowed_commitment_levels}\n"
         f"7. Forbidden moves: {frame.forbidden_moves}\n\n"
+        "COMMITMENT LEVEL GUIDE:\n"
+        '- "canon": ONLY for hard state changes with definitive evidence. '
+        "Examples: move_player succeeds, transfer_item completes, mark_hook_status changes.\n"
+        '- "hint": Sensory observations, atmosphere, or indirect clues. '
+        "Use this for descriptions of smells, sounds, textures, or suspicious behavior.\n"
+        '- "belief_evidence": NPC reactions or behaviors that suggest inner state.\n'
+        '- "utterance": Direct speech or paraphrased dialogue.\n'
+        '- "texture": Pure atmosphere with no narrative claim.\n'
+        '- "event": Factual turn summary (always safe).\n'
+        '- "affordance": New item or interaction opportunity.\n\n'
+        "BAD vs GOOD examples:\n"
+        '- BAD canon: {"level": "canon", "description": "The door is sealed by magic"}\n'
+        '- GOOD hint: {"level": "hint", "description": "The door resists force, suggesting supernatural sealing"}\n'
+        '- BAD canon: {"level": "canon", "description": "Alen is afraid of the lower levels"}\n'
+        '- GOOD belief_evidence: {"level": "belief_evidence", "description": "Alen flinches when the lower door is mentioned"}\n\n'
         "REQUIRED JSON SCHEMA:\n"
         '{\n'
         '  "player_input": "<original player text>",\n'
@@ -146,6 +184,10 @@ def _build_user_prompt(
         "scene": story_packet.get("scene", {}),
         "visible_entities": story_packet.get("scene", {}).get("visible_entities", []),
         "player_location": story_packet.get("player_context", {}).get("location", ""),
+        # v0.7.1: canonical ID whitelist to prevent hallucinated IDs
+        "canonical_id_whitelist": frame.canonical_id_whitelist,
+        # v0.7.1: resolved intent from ReferenceResolver (L1)
+        "resolved_intent": _build_resolved_intent_payload(frame),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -251,6 +293,76 @@ def _validate_structure(tx: TurnTransaction, frame: NarrativeFrame) -> None:
                 raise ValueError(
                     f"Forbidden move {move!r} detected in operation {op.kind}"
                 )
+
+    # v0.7.1: canonical ID whitelist validation (skip if not populated)
+    whitelist = frame.canonical_id_whitelist
+    if whitelist:
+        active_hook_ids = set(whitelist.get("active_hook_ids", []))
+        reachable_locs = set(whitelist.get("reachable_location_ids", []))
+        visible_entities = set(whitelist.get("visible_entity_ids", []))
+
+        for op in tx.operations:
+            if op.kind == "mark_hook_status":
+                hid = op.params.get("hook_id", "")
+                if hid and active_hook_ids and hid not in active_hook_ids:
+                    raise ValueError(
+                        f"mark_hook_status hook_id {hid!r} not in active hooks. "
+                        f"Allowed: {active_hook_ids}"
+                    )
+            if op.kind == "move_player":
+                dest = op.params.get("destination", "")
+                if dest and reachable_locs and dest not in reachable_locs:
+                    raise ValueError(
+                        f"move_player destination {dest!r} not in reachable locations. "
+                        f"Allowed: {reachable_locs}"
+                    )
+            if op.kind == "speak":
+                ent = op.params.get("entity", "")
+                if ent and visible_entities and ent not in visible_entities:
+                    raise ValueError(
+                        f"speak entity {ent!r} not in visible entities. "
+                        f"Allowed: {visible_entities}"
+                    )
+
+
+# ---------------------------------------------------------------------------
+# ID coercion — use resolved intent to fix hallucinated IDs before validation
+# ---------------------------------------------------------------------------
+
+
+def _coerce_ids(tx: TurnTransaction, frame: NarrativeFrame) -> None:
+    """Patch operations with canonical IDs from ReferenceResolver when Director hallucinates.
+
+    Only fixes move_player.destination and speak.entity when the LLM invented an ID
+    that is not in the whitelist but a resolved target of the correct kind exists.
+    """
+    if not frame.resolved_targets:
+        return
+
+    loc_targets = [
+        r for r in frame.resolved_targets
+        if isinstance(r, dict) and r.get("kind") == "location"
+    ]
+    ent_targets = [
+        r for r in frame.resolved_targets
+        if isinstance(r, dict) and r.get("kind") == "entity"
+    ]
+
+    whitelist = frame.canonical_id_whitelist or {}
+    reachable_locs = set(whitelist.get("reachable_location_ids", []))
+    visible_ents = set(whitelist.get("visible_entity_ids", []))
+
+    for op in tx.operations:
+        if op.kind == "move_player":
+            dest = op.params.get("destination", "")
+            if dest and reachable_locs and dest not in reachable_locs:
+                if loc_targets:
+                    op.params["destination"] = loc_targets[0]["canonical_id"]
+        elif op.kind == "speak":
+            ent = op.params.get("entity", "")
+            if ent and visible_ents and ent not in visible_ents:
+                if ent_targets:
+                    op.params["entity"] = ent_targets[0]["canonical_id"]
 
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,11 @@ def world_from_seed(seed: WorldSeed) -> WorldState:
     world.utterances = []
     world.hints = {}
     world.affordances = {}
-    world._hook_status = {}
+    # v0.7.1: pre-load seed hook IDs so Validator can check existence
+    world._hook_status = {
+        hid: hook.get("status", "dormant")
+        for hid, hook in seed.active_hooks.items()
+    }
+    world.hidden_truths = dict(seed.hidden_truths)
 
     return world
