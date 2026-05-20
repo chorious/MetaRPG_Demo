@@ -1,0 +1,24 @@
+{
+  "turns": [
+    {
+      "turn_id": "turn_001",
+      "player_output": "你向玛拉要了一杯酒，她倒满麦酒推到你面前。",
+      "admitted_patch": [
+        {
+          "kind": "transient_event",
+          "args": {
+            "description": "玛拉为玩家倒了一杯麦酒",
+            "subject": "mara",
+            "target": "player",
+            "object": "tavern_drink"
+          }
+        }
+      ]
+    },
+    {
+      "turn_id": "turn_002",
+      "player_output": "你还没碰那杯麦酒，只是静静地坐在吧台前。",
+      "admitted_patch": []
+    }
+  ]
+}

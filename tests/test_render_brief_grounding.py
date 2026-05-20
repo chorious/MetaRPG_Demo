@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-from metarpg.agentic.render_brief import _get_absent_entities, _get_player_location, _get_visible_entities
+from metarpg.agentic.render_brief import (
+    _get_absent_entities,
+    _get_player_location,
+    _get_visible_entities,
+    _get_visible_objects,
+)
 from metarpg.agentic.transaction import NarrativeFrame, RenderBrief
 from metarpg.models import Fact, WorldState
 
@@ -22,6 +27,7 @@ class TestGetPlayerLocation:
 class TestGetVisibleEntities:
     def test_same_location(self):
         world = WorldState()
+        world.npcs = {"alen"}
         world.facts.add(Fact("at", ("player", "entrance_hall")))
         world.facts.add(Fact("at", ("alen", "entrance_hall")))
         visible = _get_visible_entities(world, "entrance_hall")
@@ -30,6 +36,7 @@ class TestGetVisibleEntities:
 
     def test_different_location(self):
         world = WorldState()
+        world.npcs = {"alen"}
         world.facts.add(Fact("at", ("player", "flooded_stair")))
         world.facts.add(Fact("at", ("alen", "entrance_hall")))
         visible = _get_visible_entities(world, "flooded_stair")
@@ -37,9 +44,39 @@ class TestGetVisibleEntities:
 
     def test_empty_location(self):
         world = WorldState()
+        world.npcs = {"alen"}
         world.facts.add(Fact("at", ("alen", "entrance_hall")))
         visible = _get_visible_entities(world, "")
         assert visible == []
+
+    def test_non_npc_filtered(self):
+        """v0.7.4.1: items should not appear in visible_entities."""
+        world = WorldState()
+        world.npcs = {"alen"}
+        world.facts.add(Fact("at", ("player", "entrance_hall")))
+        world.facts.add(Fact("at", ("alen", "entrance_hall")))
+        world.facts.add(Fact("at", ("black_ash", "entrance_hall")))
+        visible = _get_visible_entities(world, "entrance_hall")
+        assert "alen" in visible
+        assert "black_ash" not in visible
+
+
+class TestGetVisibleObjects:
+    def test_item_in_objects_not_entities(self):
+        """v0.7.4.1: items go to visible_objects, not visible_entities."""
+        world = WorldState()
+        world.npcs = {"alen"}
+        world.facts.add(Fact("at", ("player", "entrance_hall")))
+        world.facts.add(Fact("at", ("alen", "entrance_hall")))
+        world.facts.add(Fact("at", ("black_ash", "entrance_hall")))
+        objects = _get_visible_objects(world, "entrance_hall")
+        assert "black_ash" in objects
+        assert "alen" not in objects
+        assert "player" not in objects
+
+    def test_empty_no_location(self):
+        world = WorldState()
+        assert _get_visible_objects(world, "") == []
 
 
 class TestGetAbsentEntities:

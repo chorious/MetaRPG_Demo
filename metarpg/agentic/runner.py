@@ -672,9 +672,11 @@ def run_agentic_turn_v070(
         )
 
     # Build canonical ID whitelist for Director
+    # v0.7.5: ensure visible_entity_ids and visible_objects are always lists
     canonical_id_whitelist = {
         "reachable_location_ids": reachable_locs,
-        "visible_entity_ids": scene.get("visible_entities", []),
+        "visible_entity_ids": scene.get("visible_entities") or [],
+        "visible_objects": scene.get("visible_objects") or [],
         "active_hook_ids": list(seed.active_hooks.keys()),
         "allowed_motif_ids": list(seed.motifs.keys()),
     }

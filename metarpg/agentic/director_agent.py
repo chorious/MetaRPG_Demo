@@ -323,12 +323,32 @@ def _validate_structure(tx: TurnTransaction, frame: NarrativeFrame) -> None:
                         f"move_player destination {dest!r} not in reachable locations. "
                         f"Allowed: {reachable_locs}"
                     )
+            visible_objects = set(whitelist.get("visible_objects", []))
+
             if op.kind == "speak":
                 ent = op.params.get("entity", "")
                 if ent and visible_entities and ent not in visible_entities:
                     raise ValueError(
                         f"speak entity {ent!r} not in visible entities. "
                         f"Allowed: {visible_entities}"
+                    )
+                if ent and visible_objects and ent in visible_objects:
+                    raise ValueError(
+                        f"speak entity {ent!r} is an object (visible_objects), not an entity. "
+                        f"Objects cannot speak."
+                    )
+
+            if op.kind == "observe_reaction":
+                ent = op.params.get("entity", "")
+                if ent and visible_entities and ent not in visible_entities:
+                    raise ValueError(
+                        f"observe_reaction entity {ent!r} not in visible entities. "
+                        f"Allowed: {visible_entities}"
+                    )
+                if ent and visible_objects and ent in visible_objects:
+                    raise ValueError(
+                        f"observe_reaction entity {ent!r} is an object (visible_objects), not an entity. "
+                        f"Objects cannot react."
                     )
 
 

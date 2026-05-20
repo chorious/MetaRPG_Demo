@@ -1,0 +1,7 @@
+{
+  "source": "fallback",
+  "prose": "你环顾四周，心想这里一定有什么秘密。玛拉心底暗想：这个人看起来不太对劲。",
+  "player_input": "探索",
+  "post_render_status": "failed",
+  "post_render_issues": ["NPC inner monologue detected"]
+}

@@ -1,0 +1,10 @@
+{
+  "visible_entities": ["player"],
+  "visible_objects": [],
+  "prose": "Alen 看着你，眼神中充满了警惕。",
+  "player_input": "和 Alen 说话",
+  "resolved_intent": {
+    "action_type": "speak",
+    "targets": [{"canonical_id": "alen", "available": false}]
+  }
+}

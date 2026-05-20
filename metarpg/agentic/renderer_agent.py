@@ -57,6 +57,8 @@ def _build_system_prompt(brief: RenderBrief) -> str:
         "8. Only describe entities in visible_entities as physically present in the scene.",
         "9. Never place absent_entities in the scene.",
         "10. Do not describe NPC reactions, speech, or presence if they are in absent_entities.",
+        "10a. Items in visible_objects are inanimate unless explicitly marked as actor. "
+        "Never personify visible_objects as people or NPCs.",
         "11. Do not introduce new marks, sounds, or mechanisms unless they appear in committed_events or allowed_hints.",
         "12. When describing door marks, scratches, or mechanisms:",
         "    - Do not emphasize exact counts (e.g. 'three') as significant clues.",
@@ -68,6 +70,12 @@ def _build_system_prompt(brief: RenderBrief) -> str:
         "    - Do NOT render a previous turn's action as if it is the current action.",
         "    - If response_mode is absence/unreachable/fallback, keep output short and grounded.",
         "    - Respect must_address and must_not_claim from the obligation.",
+        "",
+        "BAD / GOOD examples:",
+        "Object personification BAD: '那堆黑灰站了起来，默默注视着你。'",
+        "Object personification GOOD: '那堆黑灰静静地铺在石板上，风吹过也没有任何变化。'",
+        "Unreachable BAD: '你回到那扇门前，试着推动它。'",
+        "Unreachable GOOD: '你辨认出那扇门的方向，但积水和断裂的阶梯让你无法从这里直接回去。'",
     ]
     return "\n".join(lines)
 
@@ -80,8 +88,10 @@ def _build_user_prompt(brief: RenderBrief, story_packet: dict[str, Any]) -> str:
         brief.player_location or "Unknown",
         "## Recent Events",
         "\n".join(brief.committed_events) or "None",
-        "## Visible Entities (physically present)",
+        "## Visible Entities (physically present NPCs)",
         "\n".join(brief.visible_entities) or "None",
+        "## Visible Objects (inanimate items/props)",
+        "\n".join(brief.visible_objects) or "None",
         "## Absent Entities (do NOT place in scene)",
         "\n".join(brief.absent_entities) or "None",
         "## Allowed Hints",

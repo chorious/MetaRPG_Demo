@@ -1,0 +1,11 @@
+{
+  "hidden_truths": [
+    {"predicate": "at", "args": ["rusk", "guard_post"], "alias": "rusk_at_guard_post"}
+  ],
+  "public_facts": [
+    "你注意到 Rusk 正守在哨站，他的身影在火光中若隐若现。",
+    "酒馆里弥漫着麦酒的香气。"
+  ],
+  "player_input": "观察周围",
+  "prose": "你注意到 Rusk 正守在哨站，他的身影在火光中若隐若现。"
+}

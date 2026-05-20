@@ -41,8 +41,20 @@ def validate_transaction(
     accepted_commitments: list[Commitment] = []
 
     # 1. Operation-level hard checks
+    canonical_whitelist = (
+        tx.narrative_frame.canonical_id_whitelist
+        if tx.narrative_frame
+        else {}
+    )
+    visible_entity_ids = canonical_whitelist.get("visible_entity_ids") if canonical_whitelist else None
+    visible_objects = canonical_whitelist.get("visible_objects") if canonical_whitelist else None
+    # v0.7.5: never pass None where empty list means "nothing visible"
+    if visible_entity_ids is None:
+        visible_entity_ids = []
+    if visible_objects is None:
+        visible_objects = []
     for i, op in enumerate(tx.operations):
-        op_issues = _check_operation(op, i, world)
+        op_issues = _check_operation(op, i, world, visible_entity_ids, visible_objects)
         issues.extend(op_issues)
 
     # 2. Commitment-level checks + downgrade paths
@@ -87,10 +99,27 @@ def validate_transaction(
 # ---------------------------------------------------------------------------
 
 
-def _check_operation(op: Operation, index: int, world: WorldState) -> list[ValidationIssue]:
+def _check_operation(
+    op: Operation,
+    index: int,
+    world: WorldState,
+    visible_entity_ids: list[str] | None = None,
+    visible_objects: list[str] | None = None,
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     kind = op.kind
     params = op.params
+
+    # v0.7.5 helper: strict whitelist; empty list means "only player/environment visible"
+    def _entity_visible(entity: str) -> bool:
+        if entity in ("player", "environment"):
+            return True
+        if visible_entity_ids is not None:
+            return entity in visible_entity_ids
+        return _entity_present(entity, world)
+
+    def _is_object(entity: str) -> bool:
+        return visible_objects is not None and entity in visible_objects
 
     if kind == "extinguish_item" or kind == "consume_item":
         item = params.get("item")
@@ -106,25 +135,42 @@ def _check_operation(op: Operation, index: int, world: WorldState) -> list[Valid
 
     elif kind == "speak":
         entity = params.get("entity")
-        if not _entity_present(entity, world):
+        if not _entity_visible(entity):
             issues.append(
                 ValidationIssue(
                     severity="hard_fail",
                     type="absent_entity",
-                    reason=f"Entity {entity} is not present",
+                    reason=f"Entity {entity} is not visible in scene",
+                    operation_index=index,
+                )
+            )
+        elif _is_object(entity):
+            issues.append(
+                ValidationIssue(
+                    severity="hard_fail",
+                    type="object_as_entity",
+                    reason=f"Entity {entity} is an object (visible_objects), cannot speak",
                     operation_index=index,
                 )
             )
 
     elif kind == "observe_reaction":
         entity = params.get("entity")
-        # "environment" is a pseudo-entity for ambient observations
-        if entity and entity not in ("player", "environment") and not _entity_present(entity, world):
+        if entity and not _entity_visible(entity):
             issues.append(
                 ValidationIssue(
                     severity="hard_fail",
                     type="absent_entity_reaction",
-                    reason=f"observe_reaction for absent entity: {entity}",
+                    reason=f"observe_reaction for entity not visible in scene: {entity}",
+                    operation_index=index,
+                )
+            )
+        elif entity and _is_object(entity):
+            issues.append(
+                ValidationIssue(
+                    severity="hard_fail",
+                    type="object_as_entity_reaction",
+                    reason=f"Entity {entity} is an object (visible_objects), cannot react",
                     operation_index=index,
                 )
             )

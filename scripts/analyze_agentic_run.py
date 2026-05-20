@@ -88,6 +88,49 @@ def _analyze_turn(
     result["candidate_hints_count"] = len(frame.get("candidate_hints", [])) if frame else 0
     result["motifs_to_use"] = frame.get("motifs_to_use", []) if frame else []
 
+    # --- l2_required (v0.7.4.1) ---
+    # Compute whether this turn should have run L2, based on artifact data.
+    l2_required = False
+    raw_parsed = tx_raw.get("parsed", {}) if tx_raw else {}
+    raw_ops = raw_parsed.get("operations", [])
+    raw_commits = raw_parsed.get("commitments", [])
+    raw_assumptions = raw_parsed.get("assumptions", [])
+    # Terminal hook status changes
+    for op in raw_ops:
+        if isinstance(op, dict) and op.get("kind") == "mark_hook_status":
+            if op.get("params", {}).get("status") in ("resolved", "revealed", "completed"):
+                l2_required = True
+                break
+    # Canon commitments
+    if not l2_required:
+        for c in raw_commits:
+            if isinstance(c, dict) and c.get("level") == "canon":
+                l2_required = True
+                break
+    # Obligation-bearing sources
+    if not l2_required:
+        for a in raw_assumptions:
+            if isinstance(a, dict) and a.get("source") in (
+                "unreachable_location_response",
+                "absence_response",
+                "fallback",
+            ):
+                l2_required = True
+                break
+    # NPC interaction ops
+    if not l2_required:
+        for op in raw_ops:
+            if isinstance(op, dict) and op.get("kind") in ("speak", "observe_reaction"):
+                l2_required = True
+                break
+    # Forbidden claims
+    if not l2_required:
+        raw_forbidden = raw_parsed.get("forbidden_claims", [])
+        if raw_forbidden:
+            l2_required = True
+    result["l2_required"] = l2_required
+    result["l2_ran"] = bool(semantic)
+
     # --- transaction_raw + validated: unified source + fallback taxonomy ---
     raw_note = ""
     fallback_type = None
@@ -136,6 +179,45 @@ def _analyze_turn(
     result["rejected"] = val_status == "rejected"
     result["accepted"] = val_status in ("accepted", "downgraded")
 
+    # v0.7.4.1: Absent entity reaction accepted (from artifacts)
+    visible_ids = (
+        frame.get("canonical_id_whitelist", {}).get("visible_entity_ids", [])
+        if frame else []
+    )
+    absent_reaction_accepted = False
+    absent_speech_accepted = False
+    if val_status in ("accepted", "downgraded") and visible_ids:
+        for op in raw_ops:
+            if not isinstance(op, dict):
+                continue
+            kind = op.get("kind", "")
+            entity = op.get("params", {}).get("entity", "")
+            if entity and entity not in ("player", "environment") and entity not in visible_ids:
+                if kind == "observe_reaction":
+                    absent_reaction_accepted = True
+                elif kind == "speak":
+                    absent_speech_accepted = True
+    result["absent_reaction_accepted"] = absent_reaction_accepted
+    result["absent_speech_accepted"] = absent_speech_accepted
+
+    # --- object-as-entity detection (H4) ---
+    visible_objects = (
+        frame.get("canonical_id_whitelist", {}).get("visible_objects", [])
+        if frame else []
+    )
+    object_as_entity = False
+    if val_status in ("accepted", "downgraded") and visible_objects:
+        for op in raw_ops:
+            if not isinstance(op, dict):
+                continue
+            kind = op.get("kind", "")
+            entity = op.get("params", {}).get("entity", "")
+            if entity and entity in visible_objects:
+                if kind in ("speak", "observe_reaction"):
+                    object_as_entity = True
+                    break
+    result["object_as_entity"] = object_as_entity
+
     # --- post_render ---
     post_status = post.get("status", "") if post else ""
     result["post_render_status"] = post_status
@@ -145,6 +227,26 @@ def _analyze_turn(
 
     # L2 judgments from post_render artifact
     semantic_judgments = post.get("semantic_judgments", []) if post else []
+
+    # --- object personification from semantic judgments ---
+    object_personification = False
+    if semantic_judgments:
+        for j in semantic_judgments:
+            if isinstance(j, dict) and j.get("check") == "object_personification":
+                if j.get("verdict") in ("reject", "downgrade"):
+                    object_personification = True
+                    break
+    result["object_personification"] = object_personification
+
+    # --- unreachable contradiction (precise from semantic judgments) ---
+    unreachable_contradiction = False
+    if raw_note == "unreachable_location_response" and semantic_judgments:
+        for j in semantic_judgments:
+            if isinstance(j, dict) and j.get("check") == "intent_fulfillment":
+                if j.get("verdict") == "reject":
+                    unreachable_contradiction = True
+                    break
+    result["unreachable_contradiction"] = unreachable_contradiction
     result["l2_judgments_count"] = len(semantic_judgments)
     result["l2_rejects"] = [
         j for j in semantic_judgments
@@ -203,11 +305,16 @@ def _compute_summary(turns: list[dict[str, Any]]) -> dict[str, Any]:
     final_pass = initial_pass + post_repair
     final_failed = post_failed
 
-    # L2
+    # L2 (v0.7.4.1: split judgment count vs turn count, add required coverage)
     l2_judgments = sum(t["l2_judgments_count"] for t in turns)
     l2_rejects = sum(len(t["l2_rejects"]) for t in turns)
     l2_hard_rejects = sum(len(t["l2_hard_rejects"]) for t in turns)
     hidden_nonpass = sum(len(t["hidden_truth_nonpass"]) for t in turns)
+    l2_required_turns = sum(1 for t in turns if t.get("l2_required"))
+    l2_ran_turns = sum(1 for t in turns if t.get("l2_ran"))
+    l2_required_but_not_run = [
+        t["turn"] for t in turns if t.get("l2_required") and not t.get("l2_ran")
+    ]
 
     # Hooks
     all_active_hooks: set[str] = set()
@@ -232,6 +339,17 @@ def _compute_summary(turns: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             current_streak += 1
             longest_no_motif = max(longest_no_motif, current_streak)
+
+    # Unreachable contradictions (v0.7.5: precise from semantic judgments)
+    unreachable_contradictions = sum(1 for t in turns if t.get("unreachable_contradiction"))
+
+    # Absent entity reactions accepted (v0.7.4.1)
+    accepted_absent_reaction = sum(1 for t in turns if t.get("absent_reaction_accepted"))
+    accepted_absent_speech = sum(1 for t in turns if t.get("absent_speech_accepted"))
+
+    # Object-as-entity / personification (v0.7.5)
+    object_as_entity_count = sum(1 for t in turns if t.get("object_as_entity"))
+    object_personification_count = sum(1 for t in turns if t.get("object_personification"))
 
     # Move
     move_missing_dest = sum(1 for t in turns if t["move_player_missing_destination"])
@@ -270,10 +388,14 @@ def _compute_summary(turns: list[dict[str, Any]]) -> dict[str, Any]:
             "repair_attempts": repair_attempts,
         },
         "l2_semantic": {
-            "judgments_run": l2_judgments,
+            "semantic_judgment_count": l2_judgments,
             "rejects": l2_rejects,
             "hard_rejects": l2_hard_rejects,
             "hidden_truth_nonpass": hidden_nonpass,
+            "l2_required_turn_count": l2_required_turns,
+            "l2_ran_turn_count": l2_ran_turns,
+            "l2_required_but_not_run_count": len(l2_required_but_not_run),
+            "l2_required_but_not_run_turns": l2_required_but_not_run,
         },
         "hooks": {
             "unique_canonical_engaged": len(canonical_hooks_engaged),
@@ -291,6 +413,13 @@ def _compute_summary(turns: list[dict[str, Any]]) -> dict[str, Any]:
         "resolution": {
             "unresolved_turns": unresolved_turns,
             "absent_target_turns": sum(1 for t in turns if t["absent_target_count"] > 0),
+        },
+        "v075_correctness": {
+            "unreachable_response_contradiction_count": unreachable_contradictions,
+            "accepted_absent_entity_reaction_count": accepted_absent_reaction,
+            "accepted_absent_entity_speech_count": accepted_absent_speech,
+            "object_as_visible_entity_count": object_as_entity_count,
+            "object_personification_claim_count": object_personification_count,
         },
     }
 
@@ -313,12 +442,38 @@ def _invariant_violations(summary: dict[str, Any]) -> list[str]:
         violations.append(
             f"hidden_truth_nonpass={summary['l2_semantic']['hidden_truth_nonpass']}"
         )
+    if summary["l2_semantic"].get("l2_required_but_not_run_count", 0) > 0:
+        violations.append(
+            f"l2_required_but_not_run_count={summary['l2_semantic']['l2_required_but_not_run_count']} "
+            f"turns={summary['l2_semantic']['l2_required_but_not_run_turns']}"
+        )
+    v075 = summary.get("v075_correctness", {})
+    if v075.get("accepted_absent_entity_reaction_count", 0) > 0:
+        violations.append(
+            f"accepted_absent_entity_reaction_count={v075['accepted_absent_entity_reaction_count']}"
+        )
+    if v075.get("accepted_absent_entity_speech_count", 0) > 0:
+        violations.append(
+            f"accepted_absent_entity_speech_count={v075['accepted_absent_entity_speech_count']}"
+        )
+    if v075.get("object_as_visible_entity_count", 0) > 0:
+        violations.append(
+            f"object_as_visible_entity_count={v075['object_as_visible_entity_count']}"
+        )
+    if v075.get("object_personification_claim_count", 0) > 0:
+        violations.append(
+            f"object_personification_claim_count={v075['object_personification_claim_count']}"
+        )
+    if v075.get("unreachable_response_contradiction_count", 0) > 0:
+        violations.append(
+            f"unreachable_response_contradiction_count={v075['unreachable_response_contradiction_count']}"
+        )
     return violations
 
 
 def _print_table(summary: dict[str, Any]) -> None:
     print("=" * 60)
-    print("Agentic Run Analyzer -- v0.7.4")
+    print("Agentic Run Analyzer -- v0.7.5")
     print("=" * 60)
 
     print(f"\nTurns: {summary['turns']}")
@@ -357,6 +512,10 @@ def _print_table(summary: dict[str, Any]) -> None:
 
     print("\n--- Resolution ---")
     for k, v in summary["resolution"].items():
+        print(f"  {k}: {v}")
+
+    print("\n--- v0.7.5 Correctness ---")
+    for k, v in summary.get("v075_correctness", {}).items():
         print(f"  {k}: {v}")
 
     violations = _invariant_violations(summary)

@@ -1,0 +1,10 @@
+{
+  "visible_entities": ["player"],
+  "visible_objects": ["black_ash"],
+  "prose": "那堆黑灰站了起来，默默注视着你。",
+  "player_input": "检查黑灰",
+  "resolved_intent": {
+    "action_type": "inspect",
+    "targets": [{"canonical_id": "black_ash", "available": true}]
+  }
+}

@@ -188,6 +188,9 @@ def judge_render_claim_support(
         '- "pass" = all claims in prose are supported by committed facts or harmless texture\n'
         '- "downgrade" = prose contains plausible but unverified texture; acceptable\n'
         '- "reject" = prose asserts new facts not in committed transaction or world state\n\n'
+        "Entity/object type discipline:\n"
+        "- When world_facts include at(item, location), this supports the item being present as an object, "
+        "not as a character with agency. Do not treat object presence as evidence for NPC personification.\n\n"
         "Output format:\n"
         '{"verdict": "pass|downgrade|reject", "category": "...", '
         '"evidence": "...", "suggested_downgrade": "...", "confidence": 0.0-1.0}'
@@ -223,6 +226,7 @@ def judge_intent_fulfillment(
     resolved_intent: dict[str, Any],
     prose: str,
     transaction_summary: dict[str, Any],
+    current_turn_obligation: dict[str, Any] | None = None,
     client: LlmClient | None = None,
 ) -> SemanticJudgment:
     """Judge whether rendered prose fulfills the current turn's player intent.
@@ -257,6 +261,88 @@ def judge_intent_fulfillment(
         '- "unsupported_continuation" = prose claims an action succeeded that the transaction did not commit\n'
         '- "missing_refusal" = prose should acknowledge an absent/unreachable target but does not\n'
         '- "over_answered" = prose invents outcomes or details not in the transaction\n\n'
+        "Current-turn obligation enforcement:\n"
+        "If current_turn_obligation.response_mode == \"unreachable\":\n"
+        '  - prose MUST express that the target is not directly reachable from here.\n'
+        '  - prose MUST NOT express that the player has arrived at, touched, pushed, or interacted with the target.\n'
+        '  - prose MAY describe direction, memory, or distance judgment.\n'
+        '  - BAD: "你回到那扇门前，试着推动它。"\n'
+        '  - GOOD: "你辨认出那扇门的方向，但积水和断裂的阶梯让你无法从这里直接回去。"\n\n'
+        "must_not_claim enforcement:\n"
+        "- Read current_turn_obligation.must_not_claim list.\n"
+        "- For each item in must_not_claim, verify the prose does NOT violate it.\n"
+        "- If any must_not_claim is violated → reject.\n\n"
+        "Output format:\n"
+        '{"verdict": "pass|downgrade|reject", "category": "...", '
+        '"evidence": "...", "suggested_downgrade": "...", "confidence": 0.0-1.0}'
+    )
+
+    payload: dict[str, Any] = {
+        "player_input": player_input,
+        "resolved_intent": resolved_intent,
+        "prose": prose,
+        "transaction_summary": transaction_summary,
+        "instructions": (
+            "Do not penalize prose for omitting historical context. "
+            "Do penalize prose that narrates a different action or a different target than the current intent. "
+            "If the transaction was a fallback/absence/unreachable response, the prose should be short and grounded, "
+            "not a detailed narrative of a different action."
+        ),
+    }
+    if current_turn_obligation:
+        payload["current_turn_obligation"] = current_turn_obligation
+    user_prompt = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    results = _call_judge(system_prompt, user_prompt, client)
+    return results[0] if results else SemanticJudgment(
+        verdict="pass",
+        category="parse_error",
+        evidence="Judge returned no results",
+        suggested_downgrade=None,
+        confidence=0.0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. judge_object_personification (v0.7.5)
+# ---------------------------------------------------------------------------
+
+
+def judge_object_personification(
+    prose: str,
+    visible_objects: list[str],
+    client: LlmClient | None = None,
+) -> SemanticJudgment:
+    """Judge whether rendered prose personifies inanimate objects.
+
+    Returns a single judgment.
+    If client is None or no visible_objects, returns a permissive 'pass' judgment.
+    """
+    if client is None or not visible_objects:
+        return SemanticJudgment(
+            verdict="pass",
+            category="no_llm_available",
+            evidence="SemanticJudge skipped: no client provided or no visible objects",
+            suggested_downgrade=None,
+            confidence=0.0,
+        )
+
+    system_prompt = (
+        "You are a narrative semantics judge for an RPG engine.\n"
+        "Given rendered prose and a list of visible inanimate objects, "
+        "judge whether the prose personifies any of these objects.\n"
+        "Output JSON only, no markdown fences.\n\n"
+        "Verdict rules:\n"
+        '- "pass" = objects are described objectively, without agency, emotion, or intent\n'
+        '- "downgrade" = mild poetic language that could be interpreted as personification; acceptable\n'
+        '- "reject" = object is described as having intention, emotion, speech, or autonomous action\n\n'
+        "Personification includes:\n"
+        "- object 'watches', 'stares', 'looks at' the player\n"
+        "- object 'waits', 'expects', 'wants' something\n"
+        "- object 'refuses', 'accepts', 'agrees'\n"
+        "- object is described as 'angry', 'sad', 'happy', 'curious'\n"
+        "- object 'speaks', 'whispers', 'calls out'\n"
+        "- object 'moves on its own', 'follows', 'hides', 'attacks'\n\n"
         "Output format:\n"
         '{"verdict": "pass|downgrade|reject", "category": "...", '
         '"evidence": "...", "suggested_downgrade": "...", "confidence": 0.0-1.0}'
@@ -264,15 +350,12 @@ def judge_intent_fulfillment(
 
     user_prompt = json.dumps(
         {
-            "player_input": player_input,
-            "resolved_intent": resolved_intent,
             "prose": prose,
-            "transaction_summary": transaction_summary,
+            "visible_objects": visible_objects,
             "instructions": (
-                "Do not penalize prose for omitting historical context. "
-                "Do penalize prose that narrates a different action or a different target than the current intent. "
-                "If the transaction was a fallback/absence/unreachable response, the prose should be short and grounded, "
-                "not a detailed narrative of a different action."
+                "These objects are inanimate items/props. They must not be described as having "
+                "agency, emotion, intent, or autonomous action. Poetic/metaphorical language is acceptable "
+                "only if it does not create narrative confusion about whether the object is alive or sentient."
             ),
         },
         ensure_ascii=False,

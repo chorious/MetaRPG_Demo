@@ -1,0 +1,13 @@
+{
+  "response_mode": "unreachable",
+  "prose": "你回到那扇门前，试着推动它。",
+  "current_turn_obligation": {
+    "response_mode": "unreachable",
+    "must_not_claim": ["不要渲染玩家已成功到达该地点"]
+  },
+  "player_input": "回到大门",
+  "resolved_intent": {
+    "action_type": "move",
+    "targets": [{"canonical_id": "main_gate", "available": false}]
+  }
+}

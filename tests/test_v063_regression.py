@@ -299,24 +299,29 @@ def test_scorecard_clean_turn_full_experience() -> None:
 
 def test_live_and_eval_use_same_runner_contract() -> None:
     """Both interactive play_cli and smoke eval must route through
-    run_agentic_turn in runner.py."""
+    canonical runner functions in runner.py."""
     import metarpg.agentic.play_cli as play_cli_module
     import scripts.agentic_5turn_smoke_test as smoke_module
 
-    # Both modules must import run_agentic_turn from the canonical runner
-    assert hasattr(play_cli_module, "run_agentic_turn") or (
+    # play_cli uses v0.7.0 transaction-first pipeline
+    assert hasattr(play_cli_module, "run_agentic_turn_v070") or (
         "metarpg.agentic.runner" in str(play_cli_module.__dict__)
-    ), "play_cli should use runner.run_agentic_turn"
+    ), "play_cli should use runner.run_agentic_turn_v070"
 
+    # smoke_test uses v0.6.6 pipeline
     assert hasattr(smoke_module, "run_agentic_turn"), (
         "smoke_test must import run_agentic_turn directly"
     )
 
-    # Verify the function signature is the same object
-    from metarpg.agentic.runner import run_agentic_turn as canonical_runner
+    # Verify each module uses the canonical function object
+    from metarpg.agentic.runner import run_agentic_turn_v070 as canonical_v070
+    from metarpg.agentic.runner import run_agentic_turn as canonical_v066
 
-    assert smoke_module.run_agentic_turn is canonical_runner, (
-        "smoke_test must use the canonical runner function, not a copy"
+    assert play_cli_module.run_agentic_turn_v070 is canonical_v070, (
+        "play_cli must use the canonical v0.7.0 runner function, not a copy"
+    )
+    assert smoke_module.run_agentic_turn is canonical_v066, (
+        "smoke_test must use the canonical v0.6.6 runner function, not a copy"
     )
 
 

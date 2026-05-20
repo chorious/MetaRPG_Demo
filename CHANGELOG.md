@@ -1,6 +1,71 @@
 # Changelog
 
-Version milestones for MetaRPG_Dev. All commits below landed on **2026-05-18** as a single bundled push; dates therefore reflect commit dates, not development span. Latest is **v0.6.6.1**.
+Version milestones for MetaRPG_Dev. Latest is **v0.7.5**.
+
+---
+
+## v0.7.5 — 2026-05-20
+
+**Semantic Coverage Closure + Play Experience Gates.** Correctness-only patch; no structural refactor, no new gameplay.
+
+- `scripts/analyze_play_run.py` — complete rewrite: deep semantic-judgment reading, cross-turn state continuity tracking, hidden/public fact overlap detection, diagnostic code output (`METARPG_*`)
+- `scripts/analyze_agentic_run.py` — added `object_as_visible_entity_count`, `object_personification_claim_count`, `unreachable_response_contradiction_count`
+- `post_render_checker.py` — expanded `_is_risk_turn` → `_is_l2_required` (9 conditions); fail-closed if L2 required but client unavailable; added `judge_object_personification` call
+- `semantic_judge.py` — new `judge_object_personification()`; enhanced `judge_intent_fulfillment` with `must_not_claim` enforcement and unreachable hard rule
+- `transaction_validator.py` — fixed `_entity_visible()` `None` vs `[]` bug; added `object_as_entity` / `object_as_entity_reaction` hard_fail
+- `director_agent.py` — `_validate_structure` rejects `speak`/`observe_reaction` on objects
+- `renderer_agent.py` — system prompt BAD/GOOD few-shots for object personification and unreachable response
+- `runner.py` — ensures `visible_entity_ids` / `visible_objects` never `None`; passes `render_brief` / `resolved_intent` to checker
+- New fixtures: `bad_prose_*.json` (4), `bad_play_*.json` (2)
+- New tests: `test_v075_unreachable_repair.py`, `test_v075_object_personification.py`, `test_v075_play_analyzer.py` (9 targeted tests total)
+- **Known issue:** turn wall time regressed from ~20s to ~40s due to serial L2 judge calls (to be addressed in v0.7.6 or via hotfix)
+
+## v0.7.4 — 2026-05-19
+
+**Intent Fulfillment & Current-Turn Render Contract.** (`a1978aa`)
+
+- `semantic_judge.py` — new `judge_intent_fulfillment()` (L2): checks prose against player input, resolved intent, and current-turn obligation
+- `render_brief.py` — added `current_turn_obligation` (response_mode, must_not_claim, grounding_scope)
+- `renderer_agent.py` — consumes `current_turn_obligation` in system prompt
+- `post_render_checker.py` — integrated intent_fulfillment into L2 block
+- `runner.py` — passes `render_brief` to renderer and checker
+- Tests: `test_render_brief_grounding` expanded
+
+## v0.7.3 — 2026-05-19
+
+**Semantic Quality Closure.** (`0210abc`)
+
+- Repair loop: one-shot render repair via DeepSeek Flash on post-render failure, with re-check
+- `semantic_judge.py` — `judge_render_claim_support` now aware of entity/object type discipline
+- `post_render_checker.py` — L3 keyword scan + L2 semantic judge layering finalized
+- Smoke test: 20-turn Ashen Vault validation
+
+## v0.7.2 — 2026-05-19
+
+**Semantic Layer Completion.** (`9eb2981`)
+
+- `semantic_judge.py` — 3-judge suite: `judge_hook_relevance`, `judge_hidden_truth_exposure`, `judge_render_claim_support`
+- `post_render_checker.py` — L2 semantic judge integration (risk-turn only)
+- `analyze_agentic_run.py` — metrics framework for semantic runs
+
+## v0.7.1 — 2026-05-19
+
+**L2 Semantic Judge MVP.**
+
+- Local vLLM integration (`192.168.50.20:8101`, `qwen3.6-27b-nvfp4`) for semantic boundary checks
+- `judge_hidden_truth_exposure`, `judge_render_claim_support` initial implementation
+- Model routing: DeepSeek Flash → Renderer; Local vLLM → Director / Feasibility / SemanticJudge
+
+## v0.7.0 — 2026-05-19
+
+**Transaction-first pipeline.** Major architecture rewrite from legacy 12-step engine to agentic LLM pipeline.
+
+- New pipeline: Narrative Grammar → NarrativeFrame → Director → Validator → Committer → Renderer → Post-render Checker
+- `TurnTransaction`, `NarrativeFrame`, `RenderBrief`, `ValidationResult` dataclasses
+- L0/L1/L2/L3 constraint layers: deterministic hard constraints, reference resolution, semantic policy judge, hygiene scan
+- `agentic/` package: `director_agent`, `transaction_validator`, `committer`, `renderer_agent`, `post_render_checker`, `semantic_judge`, `render_repair`, `render_brief`, `feasibility`, `runner`
+- `scripts/play_agentic.py` — interactive CLI entry point
+- `scripts/agentic_dungeon_smoke_test.py` — automated smoke harness
 
 ---
 
@@ -90,7 +155,7 @@ StoryPacket → Writer → Translator → Scanner → Hard Auditor → Soft Audi
 
 | Track | Status | Version |
 |---|---|---|
-| Agentic Python pipeline | **Active** | v0.6.6.1 |
+| Agentic Python pipeline | **Active** | v0.7.5 |
 | Legacy deterministic engine | Frozen baseline | v0.5.2 |
 | UPF bridge | Paused until agentic passes primary eval | v0.5.2 |
 

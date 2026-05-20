@@ -1,12 +1,12 @@
-# MetaRPG v0.6.6.1
+# MetaRPG v0.7.5
 
 A retrodictive reasonability engine. The player drives a small village mystery;
 hidden truths are tracked as probabilistic beliefs; high-confidence hypotheses
 get canonized only after passing a forbidden-pattern check.
 
-Current line (v0.6.6.1): agentic LLM pipeline — StoryPacket → Writer →
-Translator → Scanner → Hard Auditor → Soft Auditor → Editor → Committer.
-See [CHANGELOG.md](CHANGELOG.md) and `PROJECT_STATUS.md`.
+Current line (v0.7.5): transaction-first agentic pipeline — Narrative Grammar →
+NarrativeFrame → Director → Validator → Committer → Renderer → Post-render Checker.
+See [CHANGELOG.md](CHANGELOG.md) and `reports/v0.7.5_patch_report.md`.
 
 Baseline v0.5.2 makes the bridge authoritative: MetaRPG owns consequences,
 UPF owns presentation, save/load preserves the connection.
@@ -20,17 +20,21 @@ pip install -r requirements.txt
 # Run all Python tests
 python -m pytest
 
-# Interactive REPL (uses LLM if set.env reachable)
-python -m metarpg.cli
-python -m metarpg.cli --no-llm
+# Run targeted v0.7.5 repair proof suite
+pytest tests/test_v075_*.py -v
 
-# Scripted demo
-python -m metarpg.cli --script scripts/milestone.txt --no-llm
-python -m metarpg.cli --script scripts/milestone_zh.txt --no-llm
+# Agentic smoke test (3-turn quick validation)
+python scripts/agentic_dungeon_smoke_test.py --turns 3
 
-# Call bridge manually (JSON via stdin/stdout)
-$json = '{"protocol_version":1,"command":"step","session_id":"manual","player_text":"环顾四周","options":{"force_no_llm":true}}'
-$json | python -m metarpg.bridge step
+# Full 20-turn Ashen Vault smoke
+python scripts/agentic_dungeon_smoke_test.py --turns 20
+
+# Analyze a run
+python scripts/analyze_agentic_run.py runtime/agentic_runs/<latest>
+python scripts/analyze_play_run.py runtime/agentic_runs/<latest>
+
+# Interactive agentic play
+python -m metarpg.agentic.play_cli
 ```
 
 If you see a `UnicodeEncodeError` on the legacy Windows console, set the env
@@ -41,35 +45,56 @@ var first: `$env:PYTHONIOENCODING='utf-8'`. The CLI also calls
 
 ```
 metarpg/
-  __init__.py       version
-  models.py         dataclasses: Fact, Knowledge, Relation, Motif, Frontier,
-                    Belief, Patch, Effect, Action, WorldState, LocalSlice, Retropath
-  dsl.py            parse/render the compact @LAYER lines + TRY/REQUIRES/EFFECT patches
-  world.py          WorldState, local-slice extraction, patch application, JSONL archive
-  rules.py          validate_patch + check_forbidden (alive ∧ dead, two locations,
-                    entry without access)
-  beliefs.py        apply_delta with motif modulation, threshold crossings
-  retrodict.py      explanation path proposal + validation + canonization
-  proposer.py       hypothesis generation: affordance expansion + select_best
-  scenario_hooks.py ScenarioHooks registration system (topic impacts, compilers,
-                    retropath templates, dynamic frontier)
-  narrator.py       optional LLM narration (Qwen local first, DeepSeek-Flash fallback)
-  engine.py         the 12-step turn loop + pluggable verb compilers
-  bridge.py         CLI entry point for UPF subprocess bridge (JSON stdin/stdout)
-  bridge_protocol.py BridgeRequest / BridgeResponse / BridgeSnapshot types
-  bridge_session.py session save/load for bridge mode (JSON per session)
-  export_snapshot.py convert WorldState to player-visible + debug snapshot
-  cli.py            REPL + --script mode + /matrix /canon /beliefs /archive debug cmds
-  session_logger.py per-session Markdown interaction log
+  __init__.py              version
+  models.py                dataclasses: Fact, Knowledge, Relation, Motif, Frontier,
+                           Belief, Patch, Effect, Action, WorldState, LocalSlice, Retropath
+  agentic/                 transaction-first pipeline (v0.7.x active line)
+    runner.py              main turn orchestrator: run_agentic_turn_v070
+    director_agent.py      LLM director: intent → TurnTransaction operations + commitments
+    transaction_validator.py  hard constraints: entity visibility, item ownership,
+                              location reachability, hidden-truth reveal, object/entity boundary
+    committer.py           apply accepted operations to WorldState
+    renderer_agent.py      DeepSeek-Flash: RenderBrief → prose
+    render_repair.py       one-shot repair on post-render failure
+    render_brief.py        build RenderBrief from transaction + world
+    post_render_checker.py L3 keyword scan + L2 semantic judge (fail-closed v0.7.5)
+    semantic_judge.py      local vLLM judges: hook relevance, hidden truth exposure,
+                           render claim support, intent fulfillment, object personification
+    feasibility.py         target availability + action feasibility check
+    model_client.py        LLM client wrapper (OpenAI-compatible, thinking-mode toggle)
+    play_cli.py            interactive CLI for agentic pipeline
+    run_logger.py          per-run artifact emitter
+    schemas.py             Pydantic/dataclass schemas for agentic messages
+  dsl.py                   parse/render the compact @LAYER lines + TRY/REQUIRES/EFFECT patches
+  world.py                 WorldState, local-slice extraction, patch application, JSONL archive
+  rules.py                 validate_patch + check_forbidden (legacy)
+  beliefs.py               apply_delta with motif modulation, threshold crossings
+  retrodict.py             explanation path proposal + validation + canonization (legacy)
+  proposer.py              hypothesis generation (legacy)
+  scenario_hooks.py        ScenarioHooks registration system (legacy bridge)
+  narrator.py              optional LLM narration (legacy)
+  engine.py                the 12-step turn loop (legacy, frozen v0.5.2)
+  bridge.py                CLI entry point for UPF subprocess bridge (legacy)
+  bridge_protocol.py       BridgeRequest / BridgeResponse / BridgeSnapshot types (legacy)
+  bridge_session.py        session save/load for bridge mode (legacy)
+  export_snapshot.py       convert WorldState to player-visible + debug snapshot
+  cli.py                   REPL + --script mode (legacy)
+  session_logger.py        per-session Markdown interaction log
   scenarios/
-    greyfen.py      PLAN §3 initial state + all scenario-specific hooks
+    greyfen.py             initial state + scenario-specific hooks
     __init__.py
-  tests/            pytest suite
+  tests/                   pytest suite
 scripts/
-  milestone.txt     English 8-turn walkthrough
-  milestone_zh.txt  Chinese 8-turn walkthrough
-runtime/            per-session cold archive + canon log + session log (gitignored)
-  bridge_sessions/  bridge mode session persistence (gitignored)
+  agentic_dungeon_smoke_test.py  automated smoke harness
+  play_agentic.py          minimal shim for agentic play entry
+  analyze_agentic_run.py   metrics analyzer for smoke artifacts
+  analyze_play_run.py      metrics analyzer for play run artifacts (monolithic format)
+  milestone.txt            English 8-turn walkthrough (legacy)
+  milestone_zh.txt         Chinese 8-turn walkthrough (legacy)
+runtime/                   per-session cold archive + run artifacts (gitignored)
+  agentic_runs/            agentic pipeline run outputs
+  bridge_sessions/         bridge mode session persistence (legacy, gitignored)
+reports/                   human-readable reports
 ```
 
 ## Architecture: Engine is scenario-agnostic
@@ -251,9 +276,9 @@ ask, walk → go, look → observe, accuse → confront, offer → help.
 - `scripts/milestone.txt` — 英文 8 回合演练
 - `scripts/milestone_zh.txt` — 中文 8 回合演练
 
-## LLM narrator
+## Model routing (`set.env`)
 
-`narrator.py` reads `set.env`:
+v0.7.x uses a split model strategy:
 
 ```
 local_url = http://192.168.50.20:8101
@@ -263,17 +288,15 @@ flash_model = deepseek-v4-flash
 api_key = sk-...
 ```
 
-It tries local Qwen first (OpenAI-compatible at
-`<local_url>/v1/chat/completions`), then DeepSeek's flash model at
-`<base_url>/v1/chat/completions`. If both fail it falls back to a deterministic
-template so the engine keeps running.
+| Role | Model | Endpoint |
+|---|---|---|
+| Director / Feasibility / SemanticJudge | Local vLLM (`qwen3.6-27b-nvfp4`) | `local_url` |
+| Renderer / Render repair | DeepSeek Flash (`deepseek-v4-flash`) | `base_url` |
+| ReferenceResolver fallback | Local vLLM | `local_url` |
 
-**Qwen3.6 thinking mode:** 本地模型是 Qwen3.x 系列(思考模型),服务端没开 reasoning
-parser。narrator 发送请求时通过 `chat_template_kwargs: {"enable_thinking":
-False}` 关闭 thinking,确保答案直接出现在 `content` 字段,不会截断。
-
-The renderer is constrained: it may dramatize the canon delta but cannot
-invent new entities or events (system prompt enforces this).
+The local model is Qwen3.x (thinking model); thinking is disabled via
+`chat_template_kwargs: {"enable_thinking": False}` so the answer appears
+in `content` directly.
 
 `set.env` is in `.gitignore`. Do not commit it.
 

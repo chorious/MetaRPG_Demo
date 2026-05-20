@@ -224,6 +224,17 @@ def main() -> int:
     print(f"\nLogs saved to: {run_dir}")
     print("=" * 70)
 
+    # v0.7.4.1: ensure manifest.json is written
+    if logger:
+        logger.close(
+            turns_attempted=turn_count,
+            turns_completed=len(results),
+            scorecards=[],
+            hard_failures=[],
+            medium_issues=[],
+            soft_issues=[],
+        )
+
     return 0 if error_count == 0 else 1
 
 

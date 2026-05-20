@@ -29,6 +29,7 @@ def build_render_brief(
     # v0.7.3: extract player location and visible/absent entities from world facts
     player_location = _get_player_location(world)
     visible_entities = _get_visible_entities(world, player_location)
+    visible_objects = _get_visible_objects(world, player_location)
     absent_entities = _get_absent_entities(world, visible_entities)
 
     # v0.7.4: current-turn obligation to prevent stale-context rendering
@@ -44,7 +45,7 @@ def build_render_brief(
         # v0.7.3 grounding fields
         player_location=player_location,
         visible_entities=visible_entities,
-        visible_objects=[],  # TODO: populate from world.items if needed
+        visible_objects=visible_objects,
         absent_entities=absent_entities,
         # v0.7.4 current-turn obligation
         current_turn_obligation=obligation,
@@ -101,15 +102,35 @@ def _get_player_location(world: WorldState) -> str:
 
 
 def _get_visible_entities(world: WorldState, player_location: str) -> list[str]:
-    """Return entities that share the player's location."""
+    """Return NPCs that share the player's location."""
     visible = []
     if not player_location:
         return visible
+    npcs = getattr(world, "npcs", set())
     for f in world.facts:
         if (
             f.predicate == "at"
             and len(f.args) >= 2
             and f.args[0] != "player"
+            and f.args[0] in npcs
+            and f.args[1] == player_location
+        ):
+            visible.append(f.args[0])
+    return visible
+
+
+def _get_visible_objects(world: WorldState, player_location: str) -> list[str]:
+    """Return items/props (non-NPC) that share the player's location."""
+    visible = []
+    if not player_location:
+        return visible
+    npcs = getattr(world, "npcs", set())
+    for f in world.facts:
+        if (
+            f.predicate == "at"
+            and len(f.args) >= 2
+            and f.args[0] != "player"
+            and f.args[0] not in npcs
             and f.args[1] == player_location
         ):
             visible.append(f.args[0])

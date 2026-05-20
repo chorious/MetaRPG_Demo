@@ -71,9 +71,15 @@ def check_rendered_prose(
     for fact in uncommitted:
         issues.append(f"Uncommitted world fact: {fact!r}")
 
-    # --- L2: Semantic Judge (risk-turn only, Call Budget) ---
+    # --- L2: Semantic Judge (required-turn must run, fail-closed v0.7.5) ---
     semantic_judgments: list[dict] = []
-    if _is_risk_turn(tx) and client is not None:
+    l2_required = _is_l2_required(tx)
+
+    if l2_required:
+        if client is None:
+            issues.append("L2 required but semantic judge client unavailable")
+            return {"status": "failed", "issues": issues, "semantic_judgments": []}
+
         try:
             judge = _get_semantic_judge()
             # Hidden truth exposure check
@@ -129,6 +135,7 @@ def check_rendered_prose(
                 resolved_intent=tx.player_intent or {},
                 prose=prose,
                 transaction_summary=tx_summary,
+                current_turn_obligation=tx.render_brief.current_turn_obligation or None,
                 client=client,
             )
             semantic_judgments.append({
@@ -142,9 +149,34 @@ def check_rendered_prose(
                     f"L2 semantic: intent fulfillment ({if_judgment.category}): "
                     f"{if_judgment.evidence}"
                 )
+
+            # v0.7.5: Object personification check
+            visible_objects = tx.render_brief.visible_objects or []
+            if visible_objects:
+                op_judgment = judge.judge_object_personification(
+                    prose=prose,
+                    visible_objects=visible_objects,
+                    client=client,
+                )
+                semantic_judgments.append({
+                    "check": "object_personification",
+                    "verdict": op_judgment.verdict,
+                    "category": op_judgment.category,
+                    "evidence": op_judgment.evidence,
+                })
+                if op_judgment.verdict == "reject":
+                    issues.append(
+                        f"L2 semantic: object personification ({op_judgment.category}): "
+                        f"{op_judgment.evidence}"
+                    )
         except Exception as exc:
-            # L2 failure is non-blocking; L3 already ran
-            semantic_judgments.append({"check": "error", "error": str(exc)})
+            # v0.7.5: L2 required but failed = fail-closed
+            issues.append(f"L2 required but semantic judge failed: {exc}")
+            return {
+                "status": "failed",
+                "issues": issues,
+                "semantic_judgments": semantic_judgments + [{"check": "error", "error": str(exc)}],
+            }
 
     if not issues:
         return {"status": "pass", "issues": [], "semantic_judgments": semantic_judgments}
@@ -171,24 +203,74 @@ def check_rendered_prose(
 # ---------------------------------------------------------------------------
 
 
-def _is_risk_turn(tx: TurnTransaction) -> bool:
-    """Risk turn = involves hidden truth exposure or canon commitment.
+def _is_l2_required(tx: TurnTransaction) -> bool:
+    """Determine if L2 semantic judge MUST run for this turn (v0.7.5).
 
-    Call Budget: L2 semantic check only runs on true risk turns (~20-30%).
-    v0.7.2 tightened: mark_hook_status alone is not enough; must be canon
-    or a hook status change to a terminal state (resolved/revealed).
+    A turn is L2-required if any of the following hold:
+    - Terminal hook status changes (resolved/revealed/completed)
+    - Canon commitments
+    - Forbidden claims
+    - Obligation-bearing response modes (unreachable/absence/fallback/safe_fallback)
+    - must_not_claim is non-empty
+    - Operations include speak or observe_reaction
+    - Resolved target is unavailable (available=false)
+    - Candidate hints hit hidden_truth symbolic risk
     """
-    # Terminal hook status changes (most likely to expose hidden truth)
+    # 1. Terminal hook status changes
     for op in tx.operations:
         if op.kind == "mark_hook_status":
             status = op.params.get("status", "")
             if status in ("resolved", "revealed", "completed"):
                 return True
-    # Canon commitments are strong claims that need claim-support checking
+
+    # 2. Canon commitments
     for c in tx.commitments:
         if c.level == "canon":
             return True
+
+    # 3. Forbidden claims
+    if tx.forbidden_claims:
+        return True
+
+    # 4. Obligation-bearing response modes (from render_brief)
+    obligation = tx.render_brief.current_turn_obligation or {}
+    response_mode = obligation.get("response_mode", "")
+    if response_mode in ("unreachable", "absence", "fallback", "safe_fallback"):
+        return True
+
+    # 5. must_not_claim non-empty
+    if obligation.get("must_not_claim", []):
+        return True
+
+    # 6. speak / observe_reaction operations
+    for op in tx.operations:
+        if op.kind in ("speak", "observe_reaction"):
+            return True
+
+    # 7. Resolved target available=false
+    for target in tx.player_intent.get("targets", []):
+        if isinstance(target, dict) and target.get("available") is False:
+            return True
+
+    # 8. Candidate hints hit hidden_truth symbolic risk
+    symbolic_risk_patterns = ("code", "number", "password", "secret", "hidden", "truth")
+    for hint in tx.narrative_frame.candidate_hints:
+        hint_lower = hint.lower()
+        if any(p in hint_lower for p in symbolic_risk_patterns):
+            return True
+
+    # 9. Backward compat: assumption source (unreachable/absence/fallback)
+    for assumption in tx.assumptions:
+        source = assumption.get("source", "")
+        if source in ("unreachable_location_response", "absence_response", "fallback"):
+            return True
+
     return False
+
+
+def _is_risk_turn(tx: TurnTransaction) -> bool:
+    """Deprecated: use _is_l2_required. Kept for backward compat."""
+    return _is_l2_required(tx)
 
 
 def _collect_hidden_aliases(world: WorldState) -> list[str]:
