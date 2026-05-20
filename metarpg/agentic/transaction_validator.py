@@ -44,15 +44,23 @@ def validate_transaction(
     canonical_whitelist = (
         tx.narrative_frame.canonical_id_whitelist
         if tx.narrative_frame
-        else {}
+        else None
     )
-    visible_entity_ids = canonical_whitelist.get("visible_entity_ids") if canonical_whitelist else None
-    visible_objects = canonical_whitelist.get("visible_objects") if canonical_whitelist else None
-    # v0.7.5: never pass None where empty list means "nothing visible"
-    if visible_entity_ids is None:
-        visible_entity_ids = []
-    if visible_objects is None:
-        visible_objects = []
+    # v0.7.5.1: distinguish missing whitelist from explicitly empty whitelist
+    if isinstance(canonical_whitelist, dict):
+        visible_entity_ids = (
+            canonical_whitelist.get("visible_entity_ids")
+            if "visible_entity_ids" in canonical_whitelist
+            else None
+        )
+        visible_objects = (
+            canonical_whitelist.get("visible_objects")
+            if "visible_objects" in canonical_whitelist
+            else None
+        )
+    else:
+        visible_entity_ids = None
+        visible_objects = None
     for i, op in enumerate(tx.operations):
         op_issues = _check_operation(op, i, world, visible_entity_ids, visible_objects)
         issues.extend(op_issues)

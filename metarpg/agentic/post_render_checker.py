@@ -92,6 +92,7 @@ def check_rendered_prose(
                 text=prose,
                 hidden_truths=hidden_truths,
                 client=client,
+                strict=True,
             )
             semantic_judgments.append({
                 "check": "hidden_truth_exposure",
@@ -116,6 +117,7 @@ def check_rendered_prose(
                 transaction_summary=tx_summary,
                 world_facts=world_facts,
                 client=client,
+                strict=True,
             )
             semantic_judgments.append({
                 "check": "render_claim_support",
@@ -137,6 +139,7 @@ def check_rendered_prose(
                 transaction_summary=tx_summary,
                 current_turn_obligation=tx.render_brief.current_turn_obligation or None,
                 client=client,
+                strict=True,
             )
             semantic_judgments.append({
                 "check": "intent_fulfillment",
@@ -157,6 +160,7 @@ def check_rendered_prose(
                     prose=prose,
                     visible_objects=visible_objects,
                     client=client,
+                    strict=True,
                 )
                 semantic_judgments.append({
                     "check": "object_personification",

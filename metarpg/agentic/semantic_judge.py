@@ -37,6 +37,7 @@ def judge_hook_relevance(
     active_hooks: list[dict[str, Any]],
     recent_events: list[str],
     client: LlmClient | None = None,
+    strict: bool = False,
 ) -> list[SemanticJudgment]:
     """Judge which active hooks are semantically relevant to the current intent.
 
@@ -74,7 +75,7 @@ def judge_hook_relevance(
         indent=2,
     )
 
-    return _call_judge(system_prompt, user_prompt, client)
+    return _call_judge(system_prompt, user_prompt, client, strict=strict)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,7 @@ def judge_hidden_truth_exposure(
     hidden_truths: list[dict[str, Any]],
     reveal_policy: str = "hint_first",
     client: LlmClient | None = None,
+    strict: bool = False,
 ) -> SemanticJudgment:
     """Judge whether a piece of text (prose or operation) exposes hidden truths.
 
@@ -144,7 +146,7 @@ def judge_hidden_truth_exposure(
         indent=2,
     )
 
-    results = _call_judge(system_prompt, user_prompt, client)
+    results = _call_judge(system_prompt, user_prompt, client, strict=strict)
     return results[0] if results else SemanticJudgment(
         verdict="pass",
         category="parse_error",
@@ -164,6 +166,7 @@ def judge_render_claim_support(
     transaction_summary: dict[str, Any],
     world_facts: list[str],
     client: LlmClient | None = None,
+    strict: bool = False,
 ) -> SemanticJudgment:
     """Judge whether rendered prose contains claims unsupported by committed facts.
 
@@ -206,7 +209,7 @@ def judge_render_claim_support(
         indent=2,
     )
 
-    results = _call_judge(system_prompt, user_prompt, client)
+    results = _call_judge(system_prompt, user_prompt, client, strict=strict)
     return results[0] if results else SemanticJudgment(
         verdict="pass",
         category="parse_error",
@@ -228,6 +231,7 @@ def judge_intent_fulfillment(
     transaction_summary: dict[str, Any],
     current_turn_obligation: dict[str, Any] | None = None,
     client: LlmClient | None = None,
+    strict: bool = False,
 ) -> SemanticJudgment:
     """Judge whether rendered prose fulfills the current turn's player intent.
 
@@ -293,7 +297,7 @@ def judge_intent_fulfillment(
         payload["current_turn_obligation"] = current_turn_obligation
     user_prompt = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    results = _call_judge(system_prompt, user_prompt, client)
+    results = _call_judge(system_prompt, user_prompt, client, strict=strict)
     return results[0] if results else SemanticJudgment(
         verdict="pass",
         category="parse_error",
@@ -312,6 +316,7 @@ def judge_object_personification(
     prose: str,
     visible_objects: list[str],
     client: LlmClient | None = None,
+    strict: bool = False,
 ) -> SemanticJudgment:
     """Judge whether rendered prose personifies inanimate objects.
 
@@ -362,7 +367,7 @@ def judge_object_personification(
         indent=2,
     )
 
-    results = _call_judge(system_prompt, user_prompt, client)
+    results = _call_judge(system_prompt, user_prompt, client, strict=strict)
     return results[0] if results else SemanticJudgment(
         verdict="pass",
         category="parse_error",
@@ -378,7 +383,7 @@ def judge_object_personification(
 
 
 def _call_judge(
-    system_prompt: str, user_prompt: str, client: LlmClient
+    system_prompt: str, user_prompt: str, client: LlmClient, strict: bool = False,
 ) -> list[SemanticJudgment]:
     """Call local vLLM and parse structured judgment output."""
     messages = [
@@ -389,6 +394,8 @@ def _call_judge(
     try:
         raw = client.chat_json(messages, temperature=0.2)
     except Exception:
+        if strict:
+            raise
         return []
 
     # Normalize: may be a single judgment object or {"judgments": [...]}

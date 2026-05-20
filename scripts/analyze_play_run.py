@@ -24,16 +24,19 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 def _extract_semantic_judgments(turn: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract semantic judgments from v0.7 or legacy format."""
-    # v0.7: nested in post_render
-    if "post_render" in turn and isinstance(turn["post_render"], dict):
-        return turn["post_render"].get("semantic_judgments", [])
+    post = turn.get("post_render", {})
+    if isinstance(post, dict) and post.get("semantic_judgments"):
+        return post["semantic_judgments"]
     return []
 
 
 def _extract_post_render_status(turn: dict[str, Any]) -> str:
-    """v0.7 has post_render_status; legacy uses soft_audit.passed."""
+    """v0.7 has post_render_status or nested post_render dict; legacy uses soft_audit."""
     if "post_render_status" in turn:
         return turn["post_render_status"]
+    post = turn.get("post_render", {})
+    if isinstance(post, dict) and post.get("status"):
+        return post["status"]
     soft = turn.get("soft_audit", {})
     if isinstance(soft, dict):
         if soft.get("passed") is False:
@@ -44,9 +47,12 @@ def _extract_post_render_status(turn: dict[str, Any]) -> str:
 
 
 def _extract_post_render_issues(turn: dict[str, Any]) -> list[Any]:
-    """v0.7 has post_render_issues; legacy uses soft_audit.issues."""
+    """v0.7 has post_render_issues or nested post_render dict; legacy uses soft_audit."""
     if "post_render_issues" in turn:
         return turn["post_render_issues"]
+    post = turn.get("post_render", {})
+    if isinstance(post, dict) and post.get("issues"):
+        return post["issues"]
     soft = turn.get("soft_audit", {})
     if isinstance(soft, dict):
         return soft.get("issues", [])
@@ -70,6 +76,22 @@ def _extract_scorecard(turn: dict[str, Any]) -> dict[str, Any]:
 
 def _extract_hidden_truths(turn: dict[str, Any]) -> list[str]:
     """Extract hidden truths and their aliases."""
+    # v0.7.5.1: read from world.hidden_truths if present
+    world = turn.get("world", {})
+    if world and "hidden_truths" in world:
+        hidden = world["hidden_truths"]
+        results = []
+        for h in hidden:
+            if isinstance(h, dict):
+                pred = h.get("predicate", "")
+                args = h.get("args", [])
+                alias = h.get("alias", "")
+                if pred:
+                    results.append(f"{pred}({', '.join(str(a) for a in args)})")
+                if alias:
+                    results.append(alias)
+        return results
+    # legacy fallback
     hidden = (
         turn.get("story_packet", {})
         .get("auditor_only", {})
@@ -89,9 +111,13 @@ def _extract_hidden_truths(turn: dict[str, Any]) -> list[str]:
 
 
 def _extract_public_facts(turn: dict[str, Any]) -> list[str]:
-    """Extract public facts from admitted_patch and known_facts."""
+    """Extract public facts from world.facts, admitted_patch, and known_facts."""
     facts = []
-    # From admitted patch
+    # v0.7.5.1: world.facts is the primary source
+    world = turn.get("world", {})
+    if world and "facts" in world:
+        facts.extend(world["facts"])
+    # From admitted patch (legacy)
     for patch in turn.get("admitted_patch", []):
         if isinstance(patch, dict):
             kind = patch.get("kind", "")
@@ -104,7 +130,7 @@ def _extract_public_facts(turn: dict[str, Any]) -> list[str]:
             elif kind in ("transient_event", "journal_note", "relation_delta"):
                 desc = args.get("description") or args.get("content") or json.dumps(args, ensure_ascii=False)
                 facts.append(desc)
-    # From known facts
+    # From known facts (legacy)
     known = (
         turn.get("story_packet", {})
         .get("player_context", {})

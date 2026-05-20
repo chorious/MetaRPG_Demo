@@ -65,6 +65,7 @@ def _analyze_turn(
 
     resolved = _load(artifacts.get("resolved_intent"))
     frame = _load(artifacts.get("narrative_frame"))
+    render_brief = _load(artifacts.get("render_brief"))
     tx_raw = _load(artifacts.get("transaction_raw"))
     tx_val = _load(artifacts.get("transaction_validated"))
     post = _load(artifacts.get("post_render"))
@@ -88,26 +89,62 @@ def _analyze_turn(
     result["candidate_hints_count"] = len(frame.get("candidate_hints", [])) if frame else 0
     result["motifs_to_use"] = frame.get("motifs_to_use", []) if frame else []
 
-    # --- l2_required (v0.7.4.1) ---
+    # --- l2_required (v0.7.5.1) ---
     # Compute whether this turn should have run L2, based on artifact data.
+    # Must stay in sync with production metarpg/agentic/post_render_checker.py _is_l2_required().
     l2_required = False
     raw_parsed = tx_raw.get("parsed", {}) if tx_raw else {}
     raw_ops = raw_parsed.get("operations", [])
     raw_commits = raw_parsed.get("commitments", [])
     raw_assumptions = raw_parsed.get("assumptions", [])
-    # Terminal hook status changes
+    # 1. Terminal hook status changes
     for op in raw_ops:
         if isinstance(op, dict) and op.get("kind") == "mark_hook_status":
             if op.get("params", {}).get("status") in ("resolved", "revealed", "completed"):
                 l2_required = True
                 break
-    # Canon commitments
+    # 2. Canon commitments
     if not l2_required:
         for c in raw_commits:
             if isinstance(c, dict) and c.get("level") == "canon":
                 l2_required = True
                 break
-    # Obligation-bearing sources
+    # 3. Forbidden claims
+    if not l2_required:
+        raw_forbidden = raw_parsed.get("forbidden_claims", [])
+        if raw_forbidden:
+            l2_required = True
+    # 4. Obligation-bearing response modes (from render_brief)
+    if not l2_required:
+        obligation = render_brief.get("current_turn_obligation", {}) if render_brief else {}
+        if obligation.get("response_mode", "") in ("unreachable", "absence", "fallback", "safe_fallback"):
+            l2_required = True
+    # 5. must_not_claim non-empty
+    if not l2_required:
+        obligation = render_brief.get("current_turn_obligation", {}) if render_brief else {}
+        if obligation.get("must_not_claim", []):
+            l2_required = True
+    # 6. NPC interaction ops
+    if not l2_required:
+        for op in raw_ops:
+            if isinstance(op, dict) and op.get("kind") in ("speak", "observe_reaction"):
+                l2_required = True
+                break
+    # 7. Resolved target available=false
+    if not l2_required:
+        for t in (resolved.get("targets", []) if resolved else []):
+            if isinstance(t, dict) and t.get("available") is False:
+                l2_required = True
+                break
+    # 8. Candidate hints hit hidden_truth symbolic risk
+    if not l2_required:
+        symbolic_risk_patterns = ("code", "number", "password", "secret", "hidden", "truth")
+        for hint in (frame.get("candidate_hints", []) if frame else []):
+            hint_lower = str(hint).lower()
+            if any(p in hint_lower for p in symbolic_risk_patterns):
+                l2_required = True
+                break
+    # 9. Backward compat: assumption source
     if not l2_required:
         for a in raw_assumptions:
             if isinstance(a, dict) and a.get("source") in (
@@ -117,17 +154,6 @@ def _analyze_turn(
             ):
                 l2_required = True
                 break
-    # NPC interaction ops
-    if not l2_required:
-        for op in raw_ops:
-            if isinstance(op, dict) and op.get("kind") in ("speak", "observe_reaction"):
-                l2_required = True
-                break
-    # Forbidden claims
-    if not l2_required:
-        raw_forbidden = raw_parsed.get("forbidden_claims", [])
-        if raw_forbidden:
-            l2_required = True
     result["l2_required"] = l2_required
     result["l2_ran"] = bool(semantic)
 

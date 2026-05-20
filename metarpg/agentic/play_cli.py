@@ -303,7 +303,7 @@ def main() -> int:
             _print_score(scorecard)
 
             # Persist turn and scorecard for analyze_play_run.py
-            _persist_v070_turn(result, scorecard, logger, turn_idx)
+            _persist_v070_turn(result, scorecard, logger, turn_idx, world)
             scorecards.append(scorecard.to_json())
             history.append(player_input)
 
@@ -319,8 +319,9 @@ def _persist_v070_turn(
     scorecard: TurnScorecard,
     logger: RunLogger,
     turn_idx: int,
+    world,
 ) -> None:
-    """Write a lightweight turn summary for downstream analysis."""
+    """Write a turn summary for downstream analysis."""
     tx = result.get("transaction")
     val = result.get("validation")
     post = result.get("post_render")
@@ -337,13 +338,20 @@ def _persist_v070_turn(
             {"severity": i.severity, "type": i.type, "reason": i.reason}
             for i in (val.issues if val else [])
         ],
-        "post_render_status": post.get("status", "") if post else "",
-        "post_render_issues": post.get("issues", []) if post else [],
+        "post_render": post if post else {},
         "assumptions": tx.assumptions if tx else [],
         "operations": [
             {"kind": op.kind, "params": op.params}
             for op in (tx.operations if tx else [])
         ],
+        "world": {
+            "hidden_truths": [
+                {"predicate": v.predicate, "args": list(v.args), "alias": getattr(v, "alias", "")}
+                for v in getattr(world, "hidden_truths", {}).values()
+                if hasattr(v, "predicate")
+            ] if hasattr(world, "hidden_truths") else [],
+            "facts": [str(f) for f in getattr(world, "facts", [])],
+        },
     }
     path = logger.run_dir / f"turn_{turn_idx:03d}.json"
     with open(path, "w", encoding="utf-8") as f:
